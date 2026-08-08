@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: church-timer-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - PROPRESENTER_ENABLED=true
+      # - PROPRESENTER_HOST=host.docker.internal
+      - PROPRESENTER_HOST=192.168.2.37
+      - PROPRESENTER_PORT=61767
+      - PROPRESENTER_TIMER_NAME=Segment Countdown
+    volumes:
+      - ./backend/data:/app/data
+    networks:
+      - church-timer-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/timer/state"]
+      interval: 30s
+      timeout: 15s
+      retries: 2
+      start_period: 45s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: church-timer-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - church-timer-network
+    restart: unless-stopped
+
+networks:
+  church-timer-network:
+    driver: bridge

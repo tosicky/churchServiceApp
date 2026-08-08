@@ -1,0 +1,55 @@
+{
+  "settings": {
+    "propresenter_enabled": true,
+    "propresenter_host": "192.168.2.37",
+    "propresenter_port": 61767,
+    "propresenter_timer_name": "Segment Countdown",
+    "server_address": "192.168.2.37"
+  },
+  "segments": {
+    "Praise and Worship": 900,
+    "Prayers": 600,
+    "Announcements": 600,
+    "Tithe and Offering": 600,
+    "Choir Ministration": 600,
+    "Sermon": 1800,
+    "Dedication": 600
+  },
+  "queue": {
+    "names": [
+      "Praise and Worship",
+      "Announcements",
+      "Prayers",
+      "Tithe and Offering",
+      "Choir Ministration",
+      "Sermon",
+      "Dedication"
+    ],
+    "current_index": -1
+  },
+  "templates": {
+    "Thanksgiving Sunday": {
+      "description": "Thanksgiving Sundays",
+      "segment_names": [
+        "Praise and Worship",
+        "Announcements",
+        "Prayers",
+        "Tithe and Offering",
+        "Choir Ministration",
+        "Sermon",
+        "Dedication"
+      ]
+    }
+  },
+  "stage_message": {
+    "text": "Coming Next: Announcements",
+    "expires_at": null
+  },
+  "timer": {
+    "name": "",
+    "duration": 0,
+    "remaining": 0,
+    "status": "idle",
+    "propresenter_connected": true
+  }
+}
