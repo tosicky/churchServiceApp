@@ -2,16 +2,94 @@
 @tailwind components;
 @tailwind utilities;
 
-html, body, #root {
-  height: 100%;
-  margin: 0;
-  padding: 0;
-}
+@layer base {
+  :root {
+    color-scheme: light;
 
-body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+    --c-canvas: 248 250 252;            /* slate-50 */
+    --c-surface: 255 255 255;
+    --c-surface-subtle: 241 245 249;    /* slate-100 */
+    --c-stage: 9 9 11;                  /* zinc-950 - the black timer box */
+    --c-stage-content: 244 244 245;     /* always-light text for the stage box, constant in both themes */
+
+    --c-line: 226 232 240;              /* slate-200 */
+    --c-line-strong: 203 213 225;       /* slate-300 */
+
+    --c-content: 15 23 42;              /* slate-900 */
+    --c-content-secondary: 71 85 105;   /* slate-600 */
+    --c-content-muted: 148 163 184;     /* slate-400 */
+    --c-content-inverse: 248 250 252;
+
+    --c-accent: 79 70 229;              /* indigo-600 */
+    --c-accent-hover: 67 56 202;        /* indigo-700 */
+    --c-accent-soft: 238 242 255;       /* indigo-50 */
+    --c-accent-on: 255 255 255;
+
+    --c-success: 22 163 74;             /* green-600 */
+    --c-success-soft: 240 253 244;
+    --c-success-on: 255 255 255;
+    --c-success-content: 21 128 61;
+
+    --c-warning: 217 119 6;             /* amber-600 */
+    --c-warning-soft: 255 251 235;
+    --c-warning-on: 255 255 255;
+    --c-warning-content: 180 83 9;
+
+    --c-danger: 220 38 38;              /* red-600 */
+    --c-danger-soft: 254 242 242;
+    --c-danger-on: 255 255 255;
+    --c-danger-content: 185 28 28;
+  }
+
+  .dark {
+    color-scheme: dark;
+
+    --c-canvas: 9 9 11;                 /* zinc-950 */
+    --c-surface: 24 24 27;              /* zinc-900 */
+    --c-surface-subtle: 39 39 42;       /* zinc-800 */
+    --c-stage: 0 0 0;
+
+    --c-line: 63 63 70;                 /* zinc-700 */
+    --c-line-strong: 82 82 91;          /* zinc-600 */
+
+    --c-content: 244 244 245;           /* zinc-100 */
+    --c-content-secondary: 161 161 170; /* zinc-400 */
+    --c-content-muted: 113 113 122;     /* zinc-500 */
+    --c-content-inverse: 24 24 27;
+
+    --c-accent: 129 140 248;            /* indigo-400 - lifted for dark contrast */
+    --c-accent-hover: 165 180 252;
+    --c-accent-soft: 49 46 129;         /* indigo-900, used at low alpha */
+    --c-accent-on: 24 24 27;
+
+    --c-success: 34 197 94;
+    --c-success-soft: 20 83 45;
+    --c-success-on: 9 9 11;
+    --c-success-content: 134 239 172;
+
+    --c-warning: 245 158 11;
+    --c-warning-soft: 120 53 15;
+    --c-warning-on: 9 9 11;
+    --c-warning-content: 253 230 138;
+
+    --c-danger: 248 113 113;
+    --c-danger-soft: 127 29 29;
+    --c-danger-on: 9 9 11;
+    --c-danger-content: 254 202 202;
+  }
+
+  html, body, #root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    @apply bg-canvas text-content;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+      'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+      sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
 }

@@ -1,8 +1,9 @@
 import { useEffect, useState, useRef } from 'react';
 import { useTimerSocket } from '../hooks/useTimerSocket';
-import { useTheme } from '../hooks/useTheme';
+import { useTheme } from '../theme/ThemeProvider';
 import { TimerReadout } from '../components/TimerReadout';
 import { ConnectionBadge } from '../components/ConnectionBadge';
+import { IconButton } from '../components/ui/IconButton';
 
 export function DisplayPage() {
   const { state, connected } = useTimerSocket();
@@ -19,6 +20,8 @@ export function DisplayPage() {
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
   }, []);
+
+  const fullscreenSupported = typeof document !== 'undefined' && document.fullscreenEnabled;
 
   const handleFullscreen = async () => {
     if (!containerRef.current) return;
@@ -45,37 +48,32 @@ export function DisplayPage() {
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isFullscreen]);
 
   return (
     <div
       ref={containerRef}
-      className={`w-screen h-screen flex flex-col items-center justify-center relative ${
-        theme === 'dark' ? 'bg-black' : 'bg-white'
-      }`}
+      className="w-full min-h-screen h-[100dvh] overflow-hidden flex flex-col items-center justify-center relative bg-canvas text-content"
     >
       {/* Connection Badge - Top Left */}
       <div className="absolute top-4 left-4">
         <ConnectionBadge wsConnected={connected} />
       </div>
 
-      {/* Fullscreen Button - Top Right (hidden when fullscreen) */}
-      {!isFullscreen && (
-        <button
-          onClick={handleFullscreen}
-          className="absolute top-4 right-4 bg-gray-700 hover:bg-gray-600 text-white text-xs px-3 py-1 rounded font-semibold transition"
-          title="Press 'F' or click to toggle fullscreen"
-        >
-          ⛶ Fullscreen
-        </button>
+      {/* Fullscreen Button - Top Right (hidden when fullscreen or unsupported, e.g. iOS Safari) */}
+      {!isFullscreen && fullscreenSupported && (
+        <IconButton onClick={handleFullscreen} className="absolute top-4 right-4" title="Press 'F' or click to toggle fullscreen">
+          ⛶
+        </IconButton>
       )}
 
       {/* Timer Display */}
-      <div className={theme === 'dark' ? 'text-white' : 'text-gray-900'}>
+      <div className="w-full flex-1 flex items-center justify-center min-w-0 px-4">
         {!connected && !state && (
           <div className="text-center">
             <div className="text-2xl mb-4">Connecting...</div>
-            <div className={`text-sm animate-pulse ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>
+            <div className="text-sm animate-pulse text-content-secondary">
               {connected ? 'Connected' : 'Disconnected - Retrying'}
             </div>
           </div>
@@ -85,22 +83,18 @@ export function DisplayPage() {
 
       {/* Theme Toggle (hidden in fullscreen) */}
       {!isFullscreen && (
-        <button
+        <IconButton
           onClick={toggleTheme}
-          className={`absolute bottom-4 left-4 p-2 rounded transition-colors ${
-            theme === 'dark'
-              ? 'bg-gray-700 hover:bg-gray-600 text-yellow-300'
-              : 'bg-gray-300 hover:bg-gray-400 text-gray-900'
-          }`}
+          className="absolute bottom-4 left-4"
           title="Toggle dark/light mode"
         >
           {theme === 'light' ? '🌙' : '☀️'}
-        </button>
+        </IconButton>
       )}
 
       {/* ESC to Exit Fullscreen - Bottom Right (only in fullscreen) */}
       {isFullscreen && (
-        <div className="absolute bottom-4 right-4 text-gray-500 text-xs">
+        <div className="absolute bottom-4 right-4 text-content-muted text-xs">
           Press ESC to exit fullscreen
         </div>
       )}

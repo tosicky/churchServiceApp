@@ -45,7 +45,7 @@ def get_display_stage_message() -> str:
     if stage_message.get("expires_at") is not None:
         if time.time() > stage_message["expires_at"]:
             # Message expired, revert to auto message
-            stage_message = {"text": "", "expires_at": None}
+            stage_message = {"text": "", "expires_at": None, "auto": True}
             app_state["stage_message"] = stage_message
             state_manager.save_state(app_state)
 
@@ -54,11 +54,34 @@ def get_display_stage_message() -> str:
         return stage_message["text"]
 
     # Fall back to auto "Coming Next: {segment}" message
+    return compute_auto_stage_message_text()
+
+
+def compute_auto_stage_message_text() -> str:
+    """Compute the auto "Coming Next: {segment}" text from the current queue position."""
     next_segment = get_next_segment_name()
     if next_segment:
         return f"Coming Next: {next_segment}"
-
     return ""
+
+
+async def push_stage_message_and_resync(text: str) -> None:
+    """Send a stage message to ProPresenter, then immediately re-push the absolute timer state.
+
+    ProPresenter resets its timer as a side effect of receiving a stage message, so every
+    stage message push must be followed by a resync to avoid visibly hiccuping a live countdown.
+    Also updates last_pp_message so the ticking loop doesn't redundantly re-send the same text.
+    """
+    global last_pp_message
+    await pp_client.send_stage_message(text)
+    last_pp_message = text
+    current = engine.state()
+    await pp_client.sync(
+        name=current.name,
+        duration=current.duration,
+        remaining=current.remaining,
+        status=current.status
+    )
 
 
 # Global state
@@ -73,7 +96,7 @@ app_state = state_manager.load_state()
 segments = app_state["segments"]
 queue = app_state["queue"]
 templates = app_state.get("templates", {})  # Handle old state files without templates key
-stage_message = app_state.get("stage_message", {"text": "", "expires_at": None})  # Handle old state files
+stage_message = app_state.get("stage_message", {"text": "", "expires_at": None, "auto": False})  # Handle old state files
 
 # Apply persisted ProPresenter settings
 pp_client.update_settings(app_state["settings"])
@@ -81,12 +104,13 @@ pp_client.update_settings(app_state["settings"])
 # Background task references for shutdown
 ticking_task: asyncio.Task | None = None
 health_check_task: asyncio.Task | None = None
+last_pp_message: str | None = None  # Track last stage message text sent to ProPresenter
 
 
 async def ticking_loop():
     """Background task: broadcast current state every ~1s and sync stage messages + timer to ProPresenter."""
+    global last_pp_message
     tick_count = 0
-    last_pp_message = None  # Track last message sent to ProPresenter
     while True:
         try:
             # Check and revert expired stage messages, get current display message
@@ -100,6 +124,7 @@ async def ticking_loop():
                 state_dict["next_segment_name"] = get_next_segment_name()
                 state_dict["queue_position"] = queue["current_index"] + 1 if queue["names"] else None
                 state_dict["queue_length"] = len(queue["names"]) if queue["names"] else None
+                state_dict["queue_names"] = queue["names"]
                 state_dict["stage_message"] = {
                     "text": current_display_message,
                     "expires_at": stage_message.get("expires_at")
@@ -195,6 +220,7 @@ async def get_timer_state():
     state_dict["next_segment_name"] = get_next_segment_name()
     state_dict["queue_position"] = queue["current_index"] + 1 if queue["names"] else None
     state_dict["queue_length"] = len(queue["names"]) if queue["names"] else None
+    state_dict["queue_names"] = queue["names"]
     return state_dict
 
 
@@ -371,22 +397,73 @@ async def get_queue() -> QueueModel:
 
 @app.put("/api/queue")
 async def update_queue(queue_model: QueueModel) -> QueueModel:
-    """Replace the entire queue (body: {names: [...]}, resets current_index to -1)."""
+    """Replace the entire queue (body: {names: [...]}). Used for adding, removing, and
+    drag-reordering segments, including while a service is actively running.
+
+    The submitted current_index is ignored; the server preserves the currently-playing
+    segment's position automatically. Segments that have already played (index <=
+    current_index) must remain in place at the front of the list unchanged - reordering
+    or removing them is rejected with 409, since the server has no way to "un-play" a
+    segment that's already aired. When the queue is idle (current_index == -1), any order
+    is accepted.
+    """
     from fastapi import HTTPException
 
+    global stage_message
+
+    new_names = queue_model.names
+
     # Validate that all segment names exist
-    for name in queue_model.names:
+    for name in new_names:
         if name not in segments:
             raise HTTPException(status_code=400, detail=f"Segment '{name}' does not exist")
 
     # Prevent duplicate segments in queue
-    if len(queue_model.names) != len(set(queue_model.names)):
+    if len(new_names) != len(set(new_names)):
         raise HTTPException(status_code=400, detail="Queue contains duplicate segments")
 
-    queue["names"] = queue_model.names
-    queue["current_index"] = -1
+    old_names = queue["names"]
+    old_index = queue["current_index"]
+
+    if old_index >= 0:
+        played = old_names[:old_index + 1]
+        if new_names[:len(played)] != played:
+            raise HTTPException(
+                status_code=409,
+                detail="Cannot reorder or remove segments that have already played during an active service",
+            )
+        new_index = old_index  # unchanged: the played prefix is identical
+    else:
+        new_index = -1
+
+    queue["names"] = new_names
+    queue["current_index"] = new_index
     app_state["queue"] = queue
+
+    # Recompute the auto "Coming Next" message and push it to ProPresenter, unless an
+    # operator's own custom (non-auto) message is currently showing on stage.
+    auto_text = compute_auto_stage_message_text()
+    should_push = not stage_message.get("text") or stage_message.get("auto", False)
+    if should_push and auto_text != stage_message.get("text"):
+        stage_message = {"text": auto_text, "expires_at": None, "auto": True}
+        app_state["stage_message"] = stage_message
+        asyncio.create_task(push_stage_message_and_resync(auto_text))
+
     state_manager.save_state(app_state)
+
+    # Broadcast the updated queue/next-segment info so the display page and any other
+    # connected controllers reflect the reorder immediately.
+    state = engine.state()
+    state_dict = state.to_dict()
+    state_dict["next_segment_name"] = get_next_segment_name()
+    state_dict["queue_position"] = queue["current_index"] + 1 if queue["names"] else None
+    state_dict["queue_length"] = len(queue["names"]) if queue["names"] else None
+    state_dict["queue_names"] = queue["names"]
+    state_dict["stage_message"] = {
+        "text": get_display_stage_message(),
+        "expires_at": stage_message.get("expires_at"),
+    }
+    await manager.broadcast(state_dict)
 
     return QueueModel(**queue)
 
@@ -419,31 +496,21 @@ async def advance_queue() -> TimerStateModel:
     state_dict["next_segment_name"] = get_next_segment_name()
     state_dict["queue_position"] = queue["current_index"] + 1
     state_dict["queue_length"] = len(queue["names"])
+    state_dict["queue_names"] = queue["names"]
     await manager.broadcast(state_dict)
 
-    # Update stage message to show next segment (if there is one)
-    next_segment = get_next_segment_name()
-    if next_segment:
-        stage_message_text = f"Coming Next: {next_segment}"
-    else:
-        stage_message_text = "Service Complete"
+    # Update stage message to show next segment, or blank the display once the queue is done
+    # (never show a literal "Service Complete" message on stage)
+    stage_message_text = compute_auto_stage_message_text()
 
     # Update stage message state (persist, no expiry)
     global stage_message
-    stage_message = {"text": stage_message_text, "expires_at": None}
+    stage_message = {"text": stage_message_text, "expires_at": None, "auto": True}
     app_state["stage_message"] = stage_message
     state_manager.save_state(app_state)
 
     # Send stage message and sync timer state sequentially to ProPresenter
-    async def _send_and_sync():
-        await pp_client.send_stage_message(stage_message_text)
-        await pp_client.sync(
-            name=state.name,
-            duration=state.duration,
-            remaining=state.remaining,
-            status=state.status
-        )
-    asyncio.create_task(_send_and_sync())
+    asyncio.create_task(push_stage_message_and_resync(stage_message_text))
 
     return state
 
@@ -471,27 +538,15 @@ async def reset_queue() -> dict:
     ))
 
     # Reset stage message to show first segment
-    next_segment = get_next_segment_name()
-    if next_segment:
-        stage_message_text = f"Coming Next: {next_segment}"
-    else:
-        stage_message_text = ""
+    stage_message_text = compute_auto_stage_message_text()
 
     global stage_message
-    stage_message = {"text": stage_message_text, "expires_at": None}
+    stage_message = {"text": stage_message_text, "expires_at": None, "auto": True}
     app_state["stage_message"] = stage_message
     state_manager.save_state(app_state)
 
     # Send stage message and sync timer state sequentially to ProPresenter
-    async def _send_and_sync():
-        await pp_client.send_stage_message(stage_message_text)
-        await pp_client.sync(
-            name=timer_state.name,
-            duration=timer_state.duration,
-            remaining=timer_state.remaining,
-            status=timer_state.status
-        )
-    asyncio.create_task(_send_and_sync())
+    asyncio.create_task(push_stage_message_and_resync(stage_message_text))
 
     await manager.broadcast(timer_state.to_dict())
 
@@ -509,8 +564,9 @@ async def start_at_queue_index(index: int) -> dict:
 
     segment_name = queue["names"][index]
 
-    # Set queue position
-    queue["current_index"] = index - 1  # -1 so next segment is at 'index'
+    # The clicked segment is now the current/playing one (matches advance_queue's
+    # convention: current_index always points at the currently-playing segment).
+    queue["current_index"] = index
     app_state["queue"] = queue
 
     # Find segment duration (stored in seconds)
@@ -519,38 +575,31 @@ async def start_at_queue_index(index: int) -> dict:
 
     duration_seconds = segments[segment_name]
 
-    # Initialize timer for this segment
-    engine.name = segment_name
-    engine.duration = duration_seconds
-    timer_state = engine.reset()
+    # Actually start the countdown (not just load it idle) - this is "start at",
+    # matching what advance_queue's "Next Segment" does.
+    timer_state = engine.start(name=segment_name, duration=duration_seconds)
     app_state["timer"] = timer_state.to_dict()
     state_manager.save_state(app_state)
 
     # Update stage message to show next segment (if there is one)
-    next_segment = get_next_segment_name()
-    if next_segment:
-        stage_message_text = f"Coming Next: {next_segment}"
-    else:
-        stage_message_text = ""
+    stage_message_text = compute_auto_stage_message_text()
 
     global stage_message
-    stage_message = {"text": stage_message_text, "expires_at": None}
+    stage_message = {"text": stage_message_text, "expires_at": None, "auto": True}
     app_state["stage_message"] = stage_message
     state_manager.save_state(app_state)
 
     # Send stage message and sync timer state sequentially to ProPresenter
-    async def _send_and_sync():
-        await pp_client.send_stage_message(stage_message_text)
-        await pp_client.sync(
-            name=timer_state.name,
-            duration=timer_state.duration,
-            remaining=timer_state.remaining,
-            status=timer_state.status
-        )
-    asyncio.create_task(_send_and_sync())
+    asyncio.create_task(push_stage_message_and_resync(stage_message_text))
 
-    # Broadcast updated state
-    await manager.broadcast(timer_state.to_dict())
+    # Broadcast updated state, including queue info so the display page and other
+    # connected controllers reflect the jump immediately.
+    state_dict = timer_state.to_dict()
+    state_dict["next_segment_name"] = get_next_segment_name()
+    state_dict["queue_position"] = queue["current_index"] + 1 if queue["names"] else None
+    state_dict["queue_length"] = len(queue["names"]) if queue["names"] else None
+    state_dict["queue_names"] = queue["names"]
+    await manager.broadcast(state_dict)
 
     return {"success": True, "message": f"Starting from segment {index + 1}: {segment_name}"}
 
@@ -748,25 +797,16 @@ async def send_stage_message(request: SendStageMessageRequest) -> StageMessageMo
     if request.duration is not None:
         expires_at = time.time() + request.duration
 
-    # Update stage message
-    stage_message = {"text": request.text, "expires_at": expires_at}
+    # Update stage message (operator-authored, not auto-computed)
+    stage_message = {"text": request.text, "expires_at": expires_at, "auto": False}
     app_state["stage_message"] = stage_message
     state_manager.save_state(app_state)
 
     # Fire the send-and-resync as a single sequential task to avoid race conditions
     # with ProPresenter's undocumented side effects (e.g., stage message reception resetting its timer)
-    async def _send_and_resync():
-        await pp_client.send_stage_message(request.text)
-        current = engine.state()
-        await pp_client.sync(
-            name=current.name,
-            duration=current.duration,
-            remaining=current.remaining,
-            status=current.status
-        )
-    asyncio.create_task(_send_and_resync())
+    asyncio.create_task(push_stage_message_and_resync(request.text))
 
-    return StageMessageModel(text=request.text, expires_at=expires_at)
+    return StageMessageModel(text=request.text, expires_at=expires_at, auto=False)
 
 
 @app.delete("/api/stage-message")
@@ -774,21 +814,12 @@ async def clear_stage_message() -> dict:
     """Clear the current stage message and resync timer state."""
     global stage_message
 
-    stage_message = {"text": "", "expires_at": None}
+    stage_message = {"text": "", "expires_at": None, "auto": True}
     app_state["stage_message"] = stage_message
     state_manager.save_state(app_state)
 
     # Clear on ProPresenter and resync timer state sequentially
-    async def _clear_and_resync():
-        await pp_client.send_stage_message("")
-        current = engine.state()
-        await pp_client.sync(
-            name=current.name,
-            duration=current.duration,
-            remaining=current.remaining,
-            status=current.status
-        )
-    asyncio.create_task(_clear_and_resync())
+    asyncio.create_task(push_stage_message_and_resync(""))
 
     return {"success": True}
 
@@ -803,6 +834,7 @@ async def websocket_timer(websocket: WebSocket):
     state_dict["next_segment_name"] = get_next_segment_name()
     state_dict["queue_position"] = queue["current_index"] + 1 if queue["names"] else None
     state_dict["queue_length"] = len(queue["names"]) if queue["names"] else None
+    state_dict["queue_names"] = queue["names"]
     await manager.send_personal(websocket, state_dict)
 
     try:

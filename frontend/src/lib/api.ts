@@ -7,6 +7,7 @@ export interface TimerState {
   next_segment_name?: string | null;
   queue_position?: number | null;
   queue_length?: number | null;
+  queue_names?: string[];
 }
 
 export async function getTimerState(): Promise<TimerState> {

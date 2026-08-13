@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { useTheme } from '../hooks/useTheme';
 import { useStageMessage } from '../hooks/useStageMessage';
+import { Button } from './ui/Button';
+import { Alert } from './ui/Alert';
+import { inputClass } from './ui/Field';
 
 export function StageMessagePanel() {
-  const { theme } = useTheme();
   const { message: currentMessage, loading, error, sendMessage, clearMessage } = useStageMessage();
 
   const [messageText, setMessageText] = useState('');
@@ -57,20 +58,12 @@ export function StageMessagePanel() {
   };
 
   return (
-    <div
-      className={`rounded-lg shadow-md p-4 space-y-4 ${
-        theme === 'dark' ? 'bg-gray-800 text-gray-100' : 'bg-white text-gray-900'
-      }`}
-    >
-      <h3 className="font-semibold text-lg">Stage Message</h3>
+    <div className="space-y-4">
+      <h3 className="font-semibold text-lg text-content">Stage Message</h3>
 
       {/* Current message display */}
       {currentMessage?.text && (
-        <div className={`p-3 rounded border ${
-          theme === 'dark'
-            ? 'bg-blue-900/20 border-blue-700 text-blue-300'
-            : 'bg-blue-50 border-blue-300 text-blue-700'
-        }`}>
+        <div className="p-3 rounded-lg border bg-accent-soft border-accent/30 text-content">
           <p className="text-xs font-semibold mb-2 flex items-center gap-2">
             <span>📺 Currently on Stage:</span>
           </p>
@@ -88,110 +81,55 @@ export function StageMessagePanel() {
 
       {/* Message input */}
       <div>
-        <label className={`block text-sm font-medium mb-1 ${
-          theme === 'dark' ? 'text-gray-300' : 'text-gray-700'
-        }`}>Message Text</label>
+        <label className="block text-sm font-medium mb-1 text-content-secondary">Message Text</label>
         <input
           type="text"
           value={messageText}
           onChange={(e) => setMessageText(e.target.value)}
           placeholder="e.g., 5 min warning, Choir take stage"
           disabled={loading}
-          className={`w-full px-3 py-2 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-            theme === 'dark'
-              ? 'bg-gray-700 border-gray-600 text-gray-100 placeholder-gray-500'
-              : 'bg-white border-gray-300 text-gray-900 placeholder-gray-400'
-          }`}
+          className={inputClass}
         />
       </div>
 
       {/* Duration picker */}
       <div>
-        <label className={`block text-sm font-medium mb-2 ${
-          theme === 'dark' ? 'text-gray-300' : 'text-gray-700'
-        }`}>Auto-clear duration</label>
+        <label className="block text-sm font-medium mb-2 text-content-secondary">Auto-clear duration</label>
         <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
           {durations.map((d) => (
-            <button
+            <Button
               key={d.value}
               onClick={() => setSelectedDuration(d.value)}
-              className={`py-2 px-2 text-sm font-semibold rounded transition-colors ${
-                selectedDuration === d.value
-                  ? theme === 'dark'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-blue-500 text-white'
-                  : theme === 'dark'
-                  ? 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-              }`}
+              variant={selectedDuration === d.value ? 'primary' : 'secondary'}
+              size="sm"
             >
               {d.label}
-            </button>
+            </Button>
           ))}
-          <button
+          <Button
             onClick={() => setSelectedDuration(null)}
-            className={`py-2 px-2 text-sm font-semibold rounded transition-colors ${
-              selectedDuration === null
-                ? theme === 'dark'
-                  ? 'bg-green-600 text-white'
-                  : 'bg-green-500 text-white'
-                : theme === 'dark'
-                ? 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-            }`}
+            variant={selectedDuration === null ? 'success' : 'secondary'}
+            size="sm"
           >
             Persist
-          </button>
+          </Button>
         </div>
         {timeRemaining !== null && (
-          <p className={`text-xs mt-2 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>
-            ⏱️ {timeRemaining}s remaining
-          </p>
+          <p className="text-xs mt-2 text-content-secondary">⏱️ {timeRemaining}s remaining</p>
         )}
       </div>
 
-      {/* Success message */}
-      {showSuccess && (
-        <div className={`p-2 border rounded text-xs ${
-          theme === 'dark'
-            ? 'bg-green-900/30 border-green-700 text-green-300'
-            : 'bg-green-100 border-green-300 text-green-700'
-        }`}>
-          ✓ Message sent to stage
-        </div>
-      )}
-
-      {/* Error message */}
-      {error && (
-        <div className={`p-2 border rounded text-xs ${
-          theme === 'dark'
-            ? 'bg-red-900/30 border-red-700 text-red-300'
-            : 'bg-red-100 border-red-300 text-red-700'
-        }`}>
-          {error}
-        </div>
-      )}
+      {showSuccess && <Alert tone="success">✓ Message sent to stage</Alert>}
+      {error && <Alert tone="error">{error}</Alert>}
 
       {/* Action buttons */}
       <div className="flex gap-2 flex-col sm:flex-row">
-        <button
-          onClick={handleSend}
-          disabled={loading || !messageText.trim()}
-          className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-500 disabled:opacity-50 text-white font-semibold py-2 px-4 rounded transition"
-        >
+        <Button onClick={handleSend} disabled={loading || !messageText.trim()} variant="primary" className="flex-1">
           {loading ? 'Sending...' : 'Send to Stage'}
-        </button>
-        <button
-          onClick={handleClear}
-          disabled={loading}
-          className={`flex-1 font-semibold py-2 px-4 rounded transition ${
-            theme === 'dark'
-              ? 'bg-gray-700 hover:bg-gray-600 disabled:bg-gray-600 disabled:opacity-50 text-gray-100'
-              : 'bg-gray-300 hover:bg-gray-400 disabled:bg-gray-300 disabled:opacity-50 text-gray-800'
-          }`}
-        >
+        </Button>
+        <Button onClick={handleClear} disabled={loading} variant="secondary" className="flex-1">
           Clear Message
-        </button>
+        </Button>
       </div>
     </div>
   );

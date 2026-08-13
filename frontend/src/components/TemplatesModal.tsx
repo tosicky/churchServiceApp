@@ -1,7 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useTemplates } from '../hooks/useTemplates';
-import { useServiceQueue } from '../hooks/useServiceQueue';
-import { useTheme } from '../hooks/useTheme';
+import { useServiceData } from '../contexts/ServiceDataContext';
+import { Modal } from './ui/Modal';
+import { Field, inputClass } from './ui/Field';
+import { Button } from './ui/Button';
+import { Alert } from './ui/Alert';
 
 interface TemplatesModalProps {
   isOpen: boolean;
@@ -10,21 +13,18 @@ interface TemplatesModalProps {
 }
 
 export function TemplatesModal({ isOpen, onClose, onTemplateLoaded }: TemplatesModalProps) {
-  const { theme } = useTheme();
-  const { templates, loading, error: templatesError, saveTemplate, loadTemplate, deleteTemplate, refetch } = useTemplates();
-  const { queue, refetch: refetchQueue } = useServiceQueue();
+  const { templates, loading, error: templatesError, saveTemplate, loadTemplate, deleteTemplate } = useTemplates();
+  const { queue, segments, refetchQueue } = useServiceData();
 
-  // Save Template section
   const [saveName, setSaveName] = useState('');
   const [saveDescription, setSaveDescription] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
-  // Load/Delete section
   const [loadingTemplate, setLoadingTemplate] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [deleteSuccess, setDeleteSuccess] = useState(false);
 
   const handleSaveTemplate = async () => {
     if (!saveName.trim()) {
@@ -49,8 +49,21 @@ export function TemplatesModal({ isOpen, onClose, onTemplateLoaded }: TemplatesM
     }
   };
 
-  const handleLoadTemplate = async (templateName: string) => {
+  const handleLoadTemplate = async (templateName: string, segmentNames: string[]) => {
+    // The broadcasting load endpoint doesn't validate segments still exist (unlike the
+    // non-broadcasting one it replaced here) - check client-side first, since we already
+    // have the current segment library from the shared context.
+    const knownSegments = new Set(segments.map((s) => s.name));
+    const missing = segmentNames.filter((n) => !knownSegments.has(n));
+    if (missing.length > 0) {
+      setLoadError(
+        `Can't load "${templateName}" - segment${missing.length > 1 ? 's no longer exist' : ' no longer exists'}: ${missing.join(', ')}`
+      );
+      return;
+    }
+
     setLoadingTemplate(templateName);
+    setLoadError(null);
     setDeleteError(null);
 
     const result = await loadTemplate(templateName);
@@ -58,11 +71,9 @@ export function TemplatesModal({ isOpen, onClose, onTemplateLoaded }: TemplatesM
 
     if (result.success) {
       await refetchQueue();
-      if (onTemplateLoaded) {
-        onTemplateLoaded();
-      }
+      onTemplateLoaded?.();
     } else {
-      setDeleteError(result.error || 'Failed to load template');
+      setLoadError(result.error || 'Failed to load template');
     }
   };
 
@@ -77,170 +88,141 @@ export function TemplatesModal({ isOpen, onClose, onTemplateLoaded }: TemplatesM
     }
   };
 
-  if (!isOpen) return null;
-
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className={`rounded-lg shadow-lg p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto ${
-        theme === 'dark'
-          ? 'bg-gray-800 text-white'
-          : 'bg-white'
-      }`}>
-        <h2 className="text-2xl font-bold mb-6">Service Templates</h2>
+    <Modal isOpen={isOpen} onClose={onClose} title="Service Templates">
+      {/* Save Current Queue as Template */}
+      <div className="mb-8 pb-8 border-b border-line">
+        <h3 className="text-lg font-semibold mb-4 text-content">Save Current Queue as Template</h3>
 
-        {/* Save Current Queue as Template */}
-        <div className="mb-8 pb-8 border-b">
-          <h3 className="text-lg font-semibold mb-4 text-green-700">Save Current Queue as Template</h3>
-
-          {queue.names.length === 0 ? (
-            <p className="text-sm text-gray-600 mb-4">Queue is empty. Add segments to create a template.</p>
-          ) : (
-            <>
-              <p className="text-sm text-gray-600 mb-4">
-                Current queue has {queue.names.length} segment{queue.names.length !== 1 ? 's' : ''}:
-              </p>
-              <ul className="text-sm text-gray-700 mb-4 bg-gray-50 p-3 rounded max-h-24 overflow-y-auto">
-                {queue.names.map((name, idx) => (
-                  <li key={idx} className="py-1">
-                    {idx + 1}. {name}
-                  </li>
-                ))}
-              </ul>
-
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-sm font-semibold mb-1">Template Name *</label>
-                  <input
-                    type="text"
-                    value={saveName}
-                    onChange={(e) => setSaveName(e.target.value)}
-                    placeholder="e.g., Standard Sunday Service"
-                    disabled={saving}
-                    className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-semibold mb-1">Description (optional)</label>
-                  <textarea
-                    value={saveDescription}
-                    onChange={(e) => setSaveDescription(e.target.value)}
-                    placeholder="e.g., Typical Sunday morning service order..."
-                    disabled={saving}
-                    rows={2}
-                    className="w-full border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
-                  />
-                </div>
-
-                {saveError && (
-                  <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
-                    {saveError}
-                  </div>
-                )}
-
-                {saveSuccess && (
-                  <div className="p-3 bg-green-50 border border-green-200 rounded text-sm text-green-700">
-                    Template saved successfully!
-                  </div>
-                )}
-
-                <button
-                  onClick={handleSaveTemplate}
-                  disabled={saving || queue.names.length === 0}
-                  className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white font-semibold py-2 px-4 rounded transition text-sm"
-                >
-                  {saving ? 'Saving...' : 'Save as Template'}
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-
-        {/* Saved Templates */}
-        <div>
-          <h3 className="text-lg font-semibold mb-4 text-blue-700">Saved Templates</h3>
-
-          {loading && (
-            <p className="text-gray-600 text-sm">Loading templates...</p>
-          )}
-
-          {templatesError && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700 mb-4">
-              {templatesError}
-            </div>
-          )}
-
-          {deleteError && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700 mb-4">
-              {deleteError}
-            </div>
-          )}
-
-          {!loading && templates.length === 0 && (
-            <p className="text-gray-600 text-sm">No saved templates yet.</p>
-          )}
-
-          {!loading && templates.length > 0 && (
-            <div className="space-y-3">
-              {templates.map((template) => (
-                <div
-                  key={template.name}
-                  className="border border-gray-200 rounded p-4 hover:bg-gray-50 transition"
-                >
-                  <div className="flex items-start justify-between gap-4 mb-2">
-                    <div className="flex-1">
-                      <h4 className="font-semibold text-gray-800">{template.name}</h4>
-                      {template.description && (
-                        <p className="text-sm text-gray-600 mt-1">{template.description}</p>
-                      )}
-                      <p className="text-xs text-gray-500 mt-2">
-                        {template.segment_names.length} segment{template.segment_names.length !== 1 ? 's' : ''}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Preview segments */}
-                  <div className="text-xs text-gray-600 mb-3 bg-gray-50 p-2 rounded max-h-16 overflow-y-auto">
-                    {template.segment_names.map((name, idx) => (
-                      <div key={idx} className="py-0.5">
-                        {idx + 1}. {name}
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Action buttons */}
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleLoadTemplate(template.name)}
-                      disabled={loadingTemplate !== null}
-                      className="flex-1 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white font-semibold py-2 px-3 rounded transition text-sm"
-                    >
-                      {loadingTemplate === template.name ? 'Loading...' : 'Load'}
-                    </button>
-                    <button
-                      onClick={() => handleDeleteTemplate(template.name)}
-                      disabled={loadingTemplate !== null}
-                      className="bg-red-500 hover:bg-red-600 disabled:bg-gray-400 text-white font-semibold py-2 px-3 rounded transition text-sm"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </div>
+        {queue.names.length === 0 ? (
+          <p className="text-sm text-content-secondary mb-4">Queue is empty. Add segments to create a template.</p>
+        ) : (
+          <>
+            <p className="text-sm text-content-secondary mb-4">
+              Current queue has {queue.names.length} segment{queue.names.length !== 1 ? 's' : ''}:
+            </p>
+            <ul className="text-sm text-content mb-4 bg-surface-subtle p-3 rounded-lg max-h-24 overflow-y-auto">
+              {queue.names.map((name, idx) => (
+                <li key={idx} className="py-1">
+                  {idx + 1}. {name}
+                </li>
               ))}
-            </div>
-          )}
-        </div>
+            </ul>
 
-        {/* Close Button */}
-        <div className="flex justify-end gap-2 mt-8 pt-6 border-t">
-          <button
-            onClick={onClose}
-            className="px-6 py-2 text-sm font-semibold text-gray-700 border rounded hover:bg-gray-50"
-          >
-            Close
-          </button>
-        </div>
+            <div className="space-y-3">
+              <Field label="Template Name *">
+                <input
+                  type="text"
+                  value={saveName}
+                  onChange={(e) => setSaveName(e.target.value)}
+                  placeholder="e.g., Standard Sunday Service"
+                  disabled={saving}
+                  className={inputClass}
+                />
+              </Field>
+
+              <Field label="Description (optional)">
+                <textarea
+                  value={saveDescription}
+                  onChange={(e) => setSaveDescription(e.target.value)}
+                  placeholder="e.g., Typical Sunday morning service order..."
+                  disabled={saving}
+                  rows={2}
+                  className={inputClass}
+                />
+              </Field>
+
+              {saveError && <Alert tone="error">{saveError}</Alert>}
+              {saveSuccess && <Alert tone="success">Template saved successfully!</Alert>}
+
+              <Button
+                onClick={handleSaveTemplate}
+                disabled={saving || queue.names.length === 0}
+                variant="primary"
+                className="w-full"
+              >
+                {saving ? 'Saving...' : 'Save as Template'}
+              </Button>
+            </div>
+          </>
+        )}
       </div>
-    </div>
+
+      {/* Saved Templates */}
+      <div>
+        <h3 className="text-lg font-semibold mb-4 text-content">Saved Templates</h3>
+
+        {loading && <p className="text-content-secondary text-sm">Loading templates...</p>}
+
+        {templatesError && <Alert tone="error" className="mb-4">{templatesError}</Alert>}
+        {loadError && (
+          <Alert tone="error" className="mb-4" onDismiss={() => setLoadError(null)}>
+            {loadError}
+          </Alert>
+        )}
+        {deleteError && (
+          <Alert tone="error" className="mb-4" onDismiss={() => setDeleteError(null)}>
+            {deleteError}
+          </Alert>
+        )}
+
+        {!loading && templates.length === 0 && (
+          <p className="text-content-secondary text-sm">No saved templates yet.</p>
+        )}
+
+        {!loading && templates.length > 0 && (
+          <div className="space-y-3">
+            {templates.map((template) => (
+              <div
+                key={template.name}
+                className="border border-line rounded-lg p-4 hover:bg-surface-subtle transition"
+              >
+                <div className="flex items-start justify-between gap-4 mb-2">
+                  <div className="flex-1">
+                    <h4 className="font-semibold text-content">{template.name}</h4>
+                    {template.description && (
+                      <p className="text-sm text-content-secondary mt-1">{template.description}</p>
+                    )}
+                    <p className="text-xs text-content-muted mt-2">
+                      {template.segment_names.length} segment{template.segment_names.length !== 1 ? 's' : ''}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Preview segments */}
+                <div className="text-xs text-content-secondary mb-3 bg-surface-subtle p-2 rounded max-h-16 overflow-y-auto">
+                  {template.segment_names.map((name, idx) => (
+                    <div key={idx} className="py-0.5">
+                      {idx + 1}. {name}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Action buttons */}
+                <div className="flex gap-2">
+                  <Button
+                    onClick={() => handleLoadTemplate(template.name, template.segment_names)}
+                    disabled={loadingTemplate !== null}
+                    variant="primary"
+                    size="sm"
+                    className="flex-1"
+                  >
+                    {loadingTemplate === template.name ? 'Loading...' : 'Load'}
+                  </Button>
+                  <Button
+                    onClick={() => handleDeleteTemplate(template.name)}
+                    disabled={loadingTemplate !== null}
+                    variant="danger"
+                    size="sm"
+                  >
+                    Delete
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </Modal>
   );
 }

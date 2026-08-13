@@ -18,14 +18,13 @@
   "queue": {
     "names": [
       "Praise and Worship",
-      "Announcements",
-      "Prayers",
       "Tithe and Offering",
+      "Prayers",
       "Choir Ministration",
       "Sermon",
       "Dedication"
     ],
-    "current_index": -1
+    "current_index": 0
   },
   "templates": {
     "Thanksgiving Sunday": {
@@ -42,14 +41,15 @@
     }
   },
   "stage_message": {
-    "text": "Coming Next: Announcements",
-    "expires_at": null
+    "text": "Coming Next: Tithe and Offering",
+    "expires_at": null,
+    "auto": true
   },
   "timer": {
-    "name": "",
-    "duration": 0,
-    "remaining": 0,
-    "status": "idle",
+    "name": "Praise and Worship",
+    "duration": 900,
+    "remaining": 899,
+    "status": "running",
     "propresenter_connected": true
   }
 }

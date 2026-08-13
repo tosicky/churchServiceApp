@@ -51,3 +51,4 @@ class SendStageMessageRequest(BaseModel):
 class StageMessageModel(BaseModel):
     text: str
     expires_at: Optional[float] = None  # Unix timestamp, or None if persisting
+    auto: bool = False  # True if auto-computed ("Coming Next: ..."), False if operator-authored

@@ -66,19 +66,21 @@ export function useTemplates() {
   const loadTemplate = async (templateName: string) => {
     try {
       setError(null);
-      const response = await fetch(`/api/templates/${templateName}/load`, {
+      // Use the queue/load-template endpoint (not templates/{name}/load) - it resets
+      // the timer and broadcasts the change over the WebSocket, so the display screen
+      // and any other connected controllers pick up the new queue immediately. It
+      // returns HTTP 200 with {success: false, error} rather than raising on failure.
+      const response = await fetch(`/api/queue/load-template/${templateName}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });
-      if (response.ok) {
-        const data = await response.json();
+      const data = await response.json().catch(() => ({}));
+      if (response.ok && data.success !== false) {
         return { success: true, queue: data.queue };
-      } else {
-        const errorData = await response.json().catch(() => ({}));
-        const errorMsg = errorData.detail || 'Failed to load template';
-        setError(errorMsg);
-        return { success: false, error: errorMsg };
       }
+      const errorMsg = data.error || data.detail || 'Failed to load template';
+      setError(errorMsg);
+      return { success: false, error: errorMsg };
     } catch (e) {
       const errorMsg = e instanceof Error ? e.message : 'Failed to load template';
       setError(errorMsg);

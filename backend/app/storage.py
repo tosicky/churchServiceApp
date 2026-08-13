@@ -11,7 +11,7 @@ class AppState(TypedDict):
     segments: dict[str, int]
     queue: dict[str, Any]
     templates: dict[str, dict[str, Any]]
-    stage_message: dict[str, Any]  # {text: str, expires_at: float | None}
+    stage_message: dict[str, Any]  # {text: str, expires_at: float | None, auto: bool}
 
 
 class StateManager:
@@ -90,5 +90,6 @@ class StateManager:
             "stage_message": {
                 "text": "",
                 "expires_at": None,
+                "auto": False,
             },
         }

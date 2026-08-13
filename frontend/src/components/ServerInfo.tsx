@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { useTheme } from '../hooks/useTheme';
+import { useTheme } from '../theme/ThemeProvider';
 import QRCode from 'qrcode.react';
+import { Button } from './ui/Button';
 
 interface ServerInfoData {
   connected_clients: number;
@@ -63,63 +64,47 @@ export function ServerInfo() {
   return (
     <>
       {isLocalhost && (
-        <div className={`border rounded-lg p-4 space-y-3 ${
-          theme === 'dark'
-            ? 'border-yellow-600 bg-yellow-900/30'
-            : 'border-yellow-200 bg-yellow-50'
-        }`}>
-          <div className={`text-xs ${theme === 'dark' ? 'text-yellow-200' : 'text-yellow-700'}`}>
+        <div className="border rounded-lg p-4 space-y-3 border-warning/40 bg-warning-soft">
+          <div className="text-xs text-warning-content">
             <p className="font-semibold mb-2">⚠️ Localhost access (laptop only)</p>
             <p className="mb-2">To access from phone/tablet/monitor:</p>
             <ol className="space-y-1 ml-3">
-              <li>1. Find your laptop's IP: <code className={`px-1 py-0.5 rounded ${theme === 'dark' ? 'bg-gray-700' : 'bg-white'}`}>ipconfig</code> or <code className={`px-1 py-0.5 rounded ${theme === 'dark' ? 'bg-gray-700' : 'bg-white'}`}>ifconfig</code></li>
-              <li>2. Open: <code className={`px-1 py-0.5 rounded ${theme === 'dark' ? 'bg-gray-700' : 'bg-white'}`}>http://192.168.x.x/</code> (use your IP)</li>
+              <li>1. Find your laptop's IP: <code className="px-1 py-0.5 rounded bg-surface">ipconfig</code> or <code className="px-1 py-0.5 rounded bg-surface">ifconfig</code></li>
+              <li>2. Open: <code className="px-1 py-0.5 rounded bg-surface">http://192.168.x.x/</code> (use your IP)</li>
               <li>3. Copy that URL and share with team</li>
             </ol>
           </div>
         </div>
       )}
 
-      <div className={`flex items-center justify-between text-xs p-3 rounded border ${
-        theme === 'dark'
-          ? 'text-gray-300 bg-gray-800 border-gray-700'
-          : 'text-gray-600 bg-white border-gray-200'
-      }`}>
+      <div className="flex items-center justify-between text-xs p-3 rounded-lg border text-content-secondary bg-surface border-line">
         <span>
           🔗 <strong>{info?.connected_clients ?? 0}</strong> device{info?.connected_clients !== 1 ? 's' : ''} connected
         </span>
-        <button
-          onClick={() => setShowQR(!showQR)}
-          className={`font-semibold ${
-            theme === 'dark'
-              ? 'text-blue-400 hover:text-blue-300'
-              : 'text-blue-600 hover:text-blue-800'
-          }`}
-        >
+        <Button onClick={() => setShowQR(!showQR)} variant="ghost" size="sm" className="text-accent hover:text-accent-hover">
           {showQR ? '▼' : '▶'} 📱 QR Code
-        </button>
+        </Button>
       </div>
 
       {showQR && (
-        <div className={`p-4 rounded border flex flex-col items-center gap-3 ${
-          theme === 'dark'
-            ? 'bg-gray-800 border-gray-700'
-            : 'bg-white border-gray-200'
-        }`}>
-          <p className={`text-xs ${theme === 'dark' ? 'text-gray-300' : 'text-gray-600'}`}>
-            Scan to access from mobile/tablet:
-          </p>
+        <div className="p-4 rounded-lg border flex flex-col items-center gap-3 bg-surface border-line">
+          <p className="text-xs text-content-secondary">Scan to access from mobile/tablet:</p>
           <QRCode
             value={customAddress ? `http://${customAddress}/` : serverUrl}
             size={200}
             level="H"
             includeMargin={true}
-            bgColor={theme === 'dark' ? '#1f2937' : '#ffffff'}
-            fgColor={theme === 'dark' ? '#f3f4f6' : '#000000'}
+            bgColor={theme === 'dark' ? '#18181b' : '#ffffff'}
+            fgColor={theme === 'dark' ? '#f4f4f5' : '#000000'}
           />
-          <p className={`text-xs text-center ${theme === 'dark' ? 'text-gray-300' : 'text-gray-600'}`}>
-            {customAddress ? `http://${customAddress}/` : serverUrl}
-          </p>
+          <div className="flex items-center gap-2">
+            <p className="text-xs text-center text-content-secondary">
+              {customAddress ? `http://${customAddress}/` : serverUrl}
+            </p>
+            <Button onClick={handleCopyIP} variant="ghost" size="sm">
+              {copied ? '✓ Copied' : 'Copy'}
+            </Button>
+          </div>
         </div>
       )}
     </>
