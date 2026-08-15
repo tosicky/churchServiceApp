@@ -25,7 +25,7 @@ export function TimerReadout({ state, large = false }: TimerReadoutProps) {
   const nameSize = large
     ? 'font-bold'
     : 'text-xl sm:text-2xl font-semibold';
-  const nameStyle = large ? { fontSize: 'clamp(1.5rem, min(7vw, 8vh), 11rem)' } : {};
+  const nameStyle = large ? { fontSize: 'clamp(2rem, min(9vw, 10vh), 14rem)' } : {};
   const gapClass = large ? 'gap-4 sm:gap-8 lg:gap-12' : 'gap-2 sm:gap-4';
 
   // Color transitions based on time remaining
@@ -40,7 +40,7 @@ export function TimerReadout({ state, large = false }: TimerReadoutProps) {
   const pulseClass = warnings.isFinalMinute ? 'animate-pulse' : '';
   const showUpNext = large && state.next_segment_name && state.remaining > 0 && state.remaining <= 60;
   const upNextSize = large ? '' : 'text-xs';
-  const upNextStyle = large ? { fontSize: 'clamp(0.875rem, min(3vw, 4vh), 2.25rem)' } : {};
+  const upNextStyle = large ? { fontSize: 'clamp(1.75rem, min(6vw, 8vh), 4.75rem)' } : {};
 
   // The engine flips status to "completed" the instant remaining hits 0 (and keeps counting
   // into overtime), so this is the exact "segment has elapsed" signal.
@@ -66,7 +66,7 @@ export function TimerReadout({ state, large = false }: TimerReadoutProps) {
         </div>
       )}
       {showUpNext && (
-        <div className={`${upNextSize} text-content-muted mt-4 break-words max-w-full`} style={upNextStyle}>
+        <div className={`${upNextSize} text-accent dark:text-white font-bold mt-4 break-words max-w-full`} style={upNextStyle}>
           Up Next: {state.next_segment_name}
         </div>
       )}

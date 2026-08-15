@@ -24,7 +24,7 @@
       "Sermon",
       "Dedication"
     ],
-    "current_index": 0
+    "current_index": 2
   },
   "templates": {
     "Thanksgiving Sunday": {
@@ -41,14 +41,14 @@
     }
   },
   "stage_message": {
-    "text": "Coming Next: Tithe and Offering",
+    "text": "Coming Next: Choir Ministration",
     "expires_at": null,
     "auto": true
   },
   "timer": {
-    "name": "Praise and Worship",
-    "duration": 900,
-    "remaining": 899,
+    "name": "Prayers",
+    "duration": 600,
+    "remaining": 599,
     "status": "running",
     "propresenter_connected": true
   }

@@ -487,8 +487,9 @@ async def advance_queue() -> TimerStateModel:
     # Start the timer with this segment
     state = engine.start(name=segment_name, duration=segment_duration)
 
-    # Persist queue state
+    # Persist queue and timer state
     app_state["queue"] = queue
+    app_state["timer"] = state.to_dict()
     state_manager.save_state(app_state)
 
     # Broadcast to all clients
