@@ -14,6 +14,12 @@ services:
       - PROPRESENTER_HOST=192.168.2.37
       - PROPRESENTER_PORT=61767
       - PROPRESENTER_TIMER_NAME=Segment Countdown
+      # IANA timezone for the "weekly" recurring service-start countdown (the one-time mode
+      # doesn't need this - it's computed from the operator's own browser). Only matters if
+      # you use weekly recurrence. Override without editing this file: either drop a .env
+      # file next to this one with TZ=America/Moncton (docker compose loads it automatically),
+      # or run `TZ=America/Moncton docker compose up -d`.
+      - TZ=${TZ:-UTC}
     volumes:
       - ./backend/data:/app/data
     networks:

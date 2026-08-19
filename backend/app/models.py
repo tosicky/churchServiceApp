@@ -13,6 +13,8 @@ class TimerStateModel(BaseModel):
 class StartRequest(BaseModel):
     name: Optional[str] = None
     duration: Optional[int] = None
+    unplanned: bool = False  # True for an ad-hoc segment started outside the queue
+    # (Quick Start panel) - suppresses "Up Next" until the queue is resumed
 
 
 class AdjustRequest(BaseModel):
@@ -41,6 +43,19 @@ class TemplateModel(BaseModel):
     name: str
     description: str = ""
     segment_names: list[str]
+
+
+class ServiceCountdownModel(BaseModel):
+    enabled: bool = False
+    recurrence: Literal["once", "weekly"] = "once"
+    target_time: Optional[str] = None  # "HH:MM" 24-hour. In "once" mode it's just for
+    # redisplaying the picker; in "weekly" mode it's authoritative, interpreted in the
+    # server's configured TZ (see docker-compose.yml) since there's no browser present
+    # each week to compute it.
+    target_timestamp: Optional[float] = None  # unix epoch seconds; authoritative for "once"
+    # mode, computed by the operator's browser at save time so no server timezone is involved
+    weekday: Optional[Literal["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]] = None
+    # used only in "weekly" mode
 
 
 class SendStageMessageRequest(BaseModel):

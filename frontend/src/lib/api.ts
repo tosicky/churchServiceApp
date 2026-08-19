@@ -8,6 +8,14 @@ export interface TimerState {
   queue_position?: number | null;
   queue_length?: number | null;
   queue_names?: string[];
+  service_countdown?: {
+    enabled: boolean;
+    recurrence: 'once' | 'weekly';
+    target_time: string | null;
+    target_timestamp: number | null;
+    weekday: string | null;
+    resolved_target_timestamp: number | null;
+  } | null;
 }
 
 export async function getTimerState(): Promise<TimerState> {
@@ -16,11 +24,11 @@ export async function getTimerState(): Promise<TimerState> {
   return response.json();
 }
 
-export async function startTimer(name?: string, duration?: number): Promise<TimerState> {
+export async function startTimer(name?: string, duration?: number, unplanned?: boolean): Promise<TimerState> {
   const response = await fetch('/api/timer/start', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, duration }),
+    body: JSON.stringify({ name, duration, unplanned }),
   });
   if (!response.ok) throw new Error('Failed to start timer');
   return response.json();

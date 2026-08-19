@@ -25,12 +25,17 @@ class ProPresenterClient:
         duration: int,
         remaining: int,
         status: Literal["idle", "running", "paused", "completed"],
+        allows_overrun: bool = True,
     ):
         """Sync timer state to ProPresenter using absolute values only (never relative adjustments).
 
         This method is idempotent and safe to call repeatedly — each call pushes the exact
         app state onto ProPresenter, never relying on ProPresenter's prior state. This eliminates
         double-counting bugs from relative adjustments and allows periodic defensive resync.
+
+        allows_overrun=False makes ProPresenter itself stop counting at 0:00 instead of running
+        into negative/overtime - used for the service-start countdown, which should never overrun,
+        unlike segment timers (which intentionally count into overtime for "Time's Up").
         """
         if not self.settings.propresenter_enabled:
             return
@@ -38,14 +43,14 @@ class ProPresenterClient:
         try:
             if status == "running":
                 # Tell ProPresenter to count down live from the exact remaining time, starting now
-                await self.start(remaining)
+                await self.start(remaining, allows_overrun=allows_overrun)
             else:
                 # idle, paused, completed -> static display at the exact remaining value
-                await self.reset(remaining)
+                await self.reset(remaining, allows_overrun=allows_overrun)
         except Exception as e:
             logger.warning(f"ProPresenter sync failed: {e}")
 
-    async def start(self, duration: int):
+    async def start(self, duration: int, allows_overrun: bool = True):
         """Start/configure the ProPresenter timer."""
         if not self.settings.propresenter_enabled:
             return
@@ -54,7 +59,7 @@ class ProPresenterClient:
             url = f"{self.settings.get_propresenter_base_url()}/v1/timer/{self.settings.propresenter_timer_name}/start"
             body = {
                 "id": {"name": self.settings.propresenter_timer_name},
-                "allows_overrun": True,
+                "allows_overrun": allows_overrun,
                 "countdown": {"duration": duration},
             }
             response = await self.client.put(url, json=body)
@@ -74,7 +79,7 @@ class ProPresenterClient:
         except Exception as e:
             logger.warning(f"ProPresenter pause failed: {e}")
 
-    async def reset(self, duration: int):
+    async def reset(self, duration: int, allows_overrun: bool = True):
         """Reset the ProPresenter timer to initial duration."""
         if not self.settings.propresenter_enabled:
             return
@@ -83,7 +88,7 @@ class ProPresenterClient:
             url = f"{self.settings.get_propresenter_base_url()}/v1/timer/{self.settings.propresenter_timer_name}/reset"
             body = {
                 "id": {"name": self.settings.propresenter_timer_name},
-                "allows_overrun": True,
+                "allows_overrun": allows_overrun,
                 "countdown": {"duration": duration},
             }
             response = await self.client.put(url, json=body)

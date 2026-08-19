@@ -46,7 +46,14 @@ export function TimerReadout({ state, large = false }: TimerReadoutProps) {
   // into overtime), so this is the exact "segment has elapsed" signal.
   const isTimeUp = state.status === 'completed';
   const timeUpSize = large ? '' : 'text-xl sm:text-3xl';
-  const timeUpStyle = large ? { fontSize: 'clamp(2rem, min(7vw, 8vh), 7rem)' } : {};
+  const timeUpStyle = large
+    ? {
+        fontSize: 'clamp(2.75rem, min(9vw, 10vh), 9rem)',
+        textShadow: '0 0 0.3em rgb(var(--c-danger) / 0.6)',
+        animationDuration: '3.5s',
+        animationDelay: '0.6s',
+      }
+    : { animationDuration: '3.5s', animationDelay: '0.6s' };
 
   return (
     <div className={`flex flex-col items-center justify-center w-full max-w-full px-4 text-center ${gapClass} ${pulseClass}`}>

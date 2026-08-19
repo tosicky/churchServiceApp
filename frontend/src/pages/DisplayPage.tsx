@@ -1,12 +1,18 @@
 import { useEffect, useState, useRef } from 'react';
 import { useTimerSocket } from '../hooks/useTimerSocket';
+import { useServiceCountdownTicker } from '../hooks/useServiceCountdownTicker';
 import { useTheme } from '../theme/ThemeProvider';
 import { TimerReadout } from '../components/TimerReadout';
+import { ServiceStartCountdown } from '../components/ServiceStartCountdown';
 import { ConnectionBadge } from '../components/ConnectionBadge';
 import { IconButton } from '../components/ui/IconButton';
 
 export function DisplayPage() {
   const { state, connected } = useTimerSocket();
+  const countdown = useServiceCountdownTicker(
+    state?.service_countdown?.enabled ?? false,
+    state?.service_countdown?.resolved_target_timestamp ?? null
+  );
   const { theme, toggleTheme } = useTheme();
   const [isFullscreen, setIsFullscreen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -78,7 +84,11 @@ export function DisplayPage() {
             </div>
           </div>
         )}
-        {state && <TimerReadout state={state} large={true} />}
+        {state && state.status === 'idle' && countdown.active ? (
+          <ServiceStartCountdown remaining={countdown.remaining} />
+        ) : (
+          state && <TimerReadout state={state} large={true} />
+        )}
       </div>
 
       {/* Theme Toggle (hidden in fullscreen) */}

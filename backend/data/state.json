@@ -13,7 +13,8 @@
     "Tithe and Offering": 600,
     "Choir Ministration": 600,
     "Sermon": 1800,
-    "Dedication": 600
+    "Dedication": 600,
+    "Sunday School Summary": 600
   },
   "queue": {
     "names": [
@@ -24,7 +25,7 @@
       "Sermon",
       "Dedication"
     ],
-    "current_index": 2
+    "current_index": -1
   },
   "templates": {
     "Thanksgiving Sunday": {
@@ -41,15 +42,22 @@
     }
   },
   "stage_message": {
-    "text": "Coming Next: Choir Ministration",
+    "text": "Coming Next: Praise and Worship",
     "expires_at": null,
     "auto": true
   },
   "timer": {
-    "name": "Prayers",
-    "duration": 600,
-    "remaining": 599,
-    "status": "running",
+    "name": "",
+    "duration": 0,
+    "remaining": 0,
+    "status": "idle",
     "propresenter_connected": true
+  },
+  "service_countdown": {
+    "enabled": true,
+    "recurrence": "weekly",
+    "target_time": "12:05",
+    "target_timestamp": null,
+    "weekday": "tuesday"
   }
 }

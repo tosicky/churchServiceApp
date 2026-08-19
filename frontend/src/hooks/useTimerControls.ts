@@ -23,7 +23,8 @@ export function useTimerControls(state: TimerState | null) {
     }
   };
 
-  const start = (name: string, durationSec: number) => guard(() => startTimer(name, durationSec));
+  const start = (name: string, durationSec: number, unplanned?: boolean) =>
+    guard(() => startTimer(name, durationSec, unplanned));
   const resume = () => guard(() => startTimer());
   const pause = () => guard(() => pauseTimer());
   const reset = () => guard(() => resetTimer());

@@ -12,6 +12,7 @@ class AppState(TypedDict):
     queue: dict[str, Any]
     templates: dict[str, dict[str, Any]]
     stage_message: dict[str, Any]  # {text: str, expires_at: float | None, auto: bool}
+    service_countdown: dict[str, Any]  # {enabled: bool, target_time: str | None}
 
 
 class StateManager:
@@ -91,5 +92,12 @@ class StateManager:
                 "text": "",
                 "expires_at": None,
                 "auto": False,
+            },
+            "service_countdown": {
+                "enabled": False,
+                "recurrence": "once",  # "once" | "weekly"
+                "target_time": None,  # "HH:MM" 24-hour
+                "target_timestamp": None,  # unix epoch seconds; authoritative for "once" mode
+                "weekday": None,  # "sunday" etc; authoritative for "weekly" mode
             },
         }

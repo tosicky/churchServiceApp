@@ -28,7 +28,7 @@ export function QuickStartPanel() {
 
   const handleStart = () => {
     if (!selectedSegment) return;
-    controls.start(selectedSegment, Math.round(selectedDuration * 60));
+    controls.start(selectedSegment, Math.round(selectedDuration * 60), true);
   };
 
   return (

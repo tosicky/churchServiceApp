@@ -1,8 +1,11 @@
 import asyncio
 import logging
+import os
 import socket
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -10,7 +13,7 @@ from .timer_engine import TimerEngine
 from .connection_manager import ConnectionManager
 from .propresenter_client import ProPresenterClient
 from .config import Settings, get_settings
-from .models import TimerStateModel, StartRequest, AdjustRequest, SettingsModel, QueueModel, TemplateModel, SendStageMessageRequest, StageMessageModel
+from .models import TimerStateModel, StartRequest, AdjustRequest, SettingsModel, QueueModel, TemplateModel, SendStageMessageRequest, StageMessageModel, ServiceCountdownModel
 from .storage import StateManager
 
 logger = logging.getLogger(__name__)
@@ -31,7 +34,14 @@ def get_local_ip():
 
 
 def get_next_segment_name() -> str | None:
-    """Get the name of the next segment in queue, or None if no queue or at end."""
+    """Get the name of the next segment in queue, or None if no queue, at the end, or an
+    ad-hoc/unplanned segment is currently playing (see unplanned_segment_active) - in that
+    case there's no meaningful "next" to preview, since the operator has stepped outside the
+    queue's normal progression. This feeds both the web "Up Next" display and the auto
+    "Coming Next" stage message, so suppressing it here covers both at once.
+    """
+    if unplanned_segment_active:
+        return None
     if not queue["names"] or queue["current_index"] >= len(queue["names"]) - 1:
         return None
     return queue["names"][queue["current_index"] + 1]
@@ -49,9 +59,18 @@ def get_display_stage_message() -> str:
             app_state["stage_message"] = stage_message
             state_manager.save_state(app_state)
 
-    # If there's an active custom message, return it
-    if stage_message.get("text"):
+    # If there's an active, operator-authored custom message, return it. Auto-generated text
+    # (auto=True) is NOT returned here even if non-empty - it's just whatever "Coming Next"
+    # happened to be stored the last time the queue changed, and would otherwise permanently
+    # block the countdown message below since nothing re-computes it on its own as time passes.
+    if stage_message.get("text") and not stage_message.get("auto"):
         return stage_message["text"]
+
+    # While the pre-service countdown is active and nothing's been started yet, prefer
+    # "Service starts in X minutes" over the normal "Coming Next" queue preview.
+    countdown_remaining = get_service_countdown_remaining()
+    if countdown_remaining is not None and engine.state().status == "idle":
+        return format_service_countdown_message(countdown_remaining)
 
     # Fall back to auto "Coming Next: {segment}" message
     return compute_auto_stage_message_text()
@@ -63,6 +82,114 @@ def compute_auto_stage_message_text() -> str:
     if next_segment:
         return f"Coming Next: {next_segment}"
     return ""
+
+
+def format_service_countdown_message(remaining_seconds: int) -> str:
+    """"Service starts in <MM:SS>" (or <H:MM:SS> past an hour) - the live ticking clock, in
+    the same format as the app's own timer readout, not a rounded "X minutes" approximation."""
+    hours, rem = divmod(max(remaining_seconds, 0), 3600)
+    minutes, seconds = divmod(rem, 60)
+    clock = f"{hours}:{minutes:02d}:{seconds:02d}" if hours > 0 else f"{minutes:02d}:{seconds:02d}"
+    return f"Service starts in {clock}"
+
+
+WEEKDAY_NUMBERS = {
+    "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+    "friday": 4, "saturday": 5, "sunday": 6,
+}
+
+
+def get_server_timezone() -> ZoneInfo:
+    """The IANA zone the SERVER should treat as "local" for weekly recurrence, from the TZ
+    env var (see docker-compose.yml). Defaults to UTC if unset, rather than silently guessing
+    a specific city - an explicit UTC display is at least obviously wrong if misconfigured,
+    where a wrong-but-plausible local time could go unnoticed for weeks.
+    """
+    tz_name = os.environ.get("TZ", "UTC")
+    try:
+        return ZoneInfo(tz_name)
+    except Exception:
+        logger.warning(f"Unknown TZ '{tz_name}', falling back to UTC")
+        return ZoneInfo("UTC")
+
+
+def compute_next_weekly_occurrence(weekday: str | None, target_time: str | None) -> float | None:
+    """Next unix-epoch occurrence of `weekday` ("sunday" etc) at `target_time` ("HH:MM"), in
+    the server's configured timezone (see get_server_timezone). Unlike the one-time mode, this
+    genuinely has to run unattended week after week with no browser present to compute it, so
+    it's the one piece of this feature that depends on the server's TZ being configured right.
+    """
+    if weekday not in WEEKDAY_NUMBERS or not target_time:
+        return None
+    try:
+        hour, minute = map(int, target_time.split(":"))
+    except ValueError:
+        return None
+
+    now = datetime.now(get_server_timezone())
+    days_ahead = (WEEKDAY_NUMBERS[weekday] - now.weekday()) % 7
+    candidate = (now + timedelta(days=days_ahead)).replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if candidate <= now:
+        candidate += timedelta(days=7)
+    return candidate.timestamp()
+
+
+# How far ahead of the target the countdown is allowed to actually show/push. Without this,
+# "weekly" mode - which re-resolves to *next* week's occurrence the instant the current one
+# elapses - would display/push a ~7-day countdown non-stop between services. Matches the
+# original intent: a short pre-service window (e.g. the gap after Sunday school), not an
+# always-on fixture.
+SERVICE_COUNTDOWN_WINDOW_SECONDS = 4 * 3600
+
+
+def get_service_countdown_state() -> dict:
+    """Snapshot of the operator-configured service-start countdown, plus the resolved next
+    occurrence as an absolute unix epoch ("resolved_target_timestamp") for clients to tick.
+
+    In "once" mode, resolved_target_timestamp is just target_timestamp verbatim - an absolute
+    moment the operator's own browser computed at save time, so no server timezone is involved
+    and it ticks correctly on whatever device is driving the display. In "weekly" mode, it's
+    computed fresh from weekday + target_time using the server's configured TZ each call, since
+    recurrence has to run unattended with no browser present to (re)compute it week to week.
+
+    Either way, resolved_target_timestamp comes back None (i.e. "nothing to show right now")
+    until the target is within SERVICE_COUNTDOWN_WINDOW_SECONDS - see the comment above it.
+    """
+    recurrence = service_countdown.get("recurrence", "once")
+    if recurrence == "weekly":
+        resolved_target_timestamp = compute_next_weekly_occurrence(
+            service_countdown.get("weekday"), service_countdown.get("target_time")
+        )
+    else:
+        resolved_target_timestamp = service_countdown.get("target_timestamp")
+
+    if resolved_target_timestamp is not None and resolved_target_timestamp - time.time() > SERVICE_COUNTDOWN_WINDOW_SECONDS:
+        resolved_target_timestamp = None
+
+    return {
+        "enabled": service_countdown.get("enabled", False),
+        "recurrence": recurrence,
+        "target_time": service_countdown.get("target_time"),
+        "target_timestamp": service_countdown.get("target_timestamp"),
+        "weekday": service_countdown.get("weekday"),
+        "resolved_target_timestamp": resolved_target_timestamp,
+    }
+
+
+def get_service_countdown_remaining() -> int | None:
+    """Seconds until the configured service-start target, or None if not enabled/elapsed.
+
+    Used only for the ProPresenter push below (stage screen + stage message), which - unlike
+    the web Display page - has no browser clock to lean on since it's driven by this server's
+    own background loop.
+    """
+    if not service_countdown.get("enabled"):
+        return None
+    target_timestamp = get_service_countdown_state()["resolved_target_timestamp"]
+    if target_timestamp is None:
+        return None
+    remaining = int(target_timestamp - time.time())
+    return remaining if remaining > 0 else None
 
 
 async def push_stage_message_and_resync(text: str) -> None:
@@ -84,6 +211,25 @@ async def push_stage_message_and_resync(text: str) -> None:
     )
 
 
+async def push_countdown_message_and_resync(text: str, remaining: int) -> None:
+    """Same idea as push_stage_message_and_resync, but for the pre-service countdown's own
+    synthetic timer box rather than the segment engine's. The message now embeds a live MM:SS
+    clock (see format_service_countdown_message) that changes every second, and every push
+    resets ProPresenter's timer as a side effect - so the resync has to follow immediately
+    every single time, not just periodically, or the on-screen timer would visibly stutter.
+    """
+    global last_pp_message
+    await pp_client.send_stage_message(text)
+    last_pp_message = text
+    await pp_client.sync(
+        name="Service Starts In",
+        duration=remaining,
+        remaining=remaining,
+        status="running",
+        allows_overrun=False,
+    )
+
+
 # Global state
 engine = TimerEngine()
 manager = ConnectionManager()
@@ -97,6 +243,7 @@ segments = app_state["segments"]
 queue = app_state["queue"]
 templates = app_state.get("templates", {})  # Handle old state files without templates key
 stage_message = app_state.get("stage_message", {"text": "", "expires_at": None, "auto": False})  # Handle old state files
+service_countdown = app_state.get("service_countdown", {"enabled": False, "target_time": None, "target_timestamp": None})  # Handle old state files
 
 # Apply persisted ProPresenter settings
 pp_client.update_settings(app_state["settings"])
@@ -105,6 +252,8 @@ pp_client.update_settings(app_state["settings"])
 ticking_task: asyncio.Task | None = None
 health_check_task: asyncio.Task | None = None
 last_pp_message: str | None = None  # Track last stage message text sent to ProPresenter
+unplanned_segment_active: bool = False  # True while an ad-hoc (Quick Start) segment is
+# playing, outside the queue's normal progression - see get_next_segment_name
 
 
 async def ticking_loop():
@@ -117,8 +266,13 @@ async def ticking_loop():
             current_display_message = get_display_stage_message()
 
             state = engine.state()
-            # Only broadcast if timer is in a ticking state and clients are connected
-            if state.status in ("running", "completed") and manager.active_connections:
+            countdown_state = get_service_countdown_state()
+            countdown_remaining = get_service_countdown_remaining()
+            # Broadcast if timer is in a ticking state, or the service countdown is enabled.
+            # The countdown itself ticks client-side (see get_service_countdown_state), but a
+            # Display page that connects *after* the operator enabled it still needs to learn
+            # {enabled, target_time} promptly rather than waiting on an unrelated broadcast.
+            if (state.status in ("running", "completed") or countdown_state["enabled"]) and manager.active_connections:
                 state_dict = state.to_dict()
                 # Add queue info and COMPUTED display message (handles expiration) to broadcast
                 state_dict["next_segment_name"] = get_next_segment_name()
@@ -129,15 +283,17 @@ async def ticking_loop():
                     "text": current_display_message,
                     "expires_at": stage_message.get("expires_at")
                 }
+                state_dict["service_countdown"] = countdown_state
                 await manager.broadcast(state_dict)
 
-            # Sync stage message to ProPresenter if it changed (e.g., expired custom message reverted to "Coming Next")
-            # Do this every tick while timer is active to catch message expirations immediately
+            # Sync stage message to ProPresenter if it changed (e.g., expired custom message
+            # reverted to "Coming Next"). Do this every tick while the timer is active, to
+            # catch changes immediately.
             if state.status in ("running", "paused") and current_display_message != last_pp_message:
                 asyncio.create_task(pp_client.send_stage_message(current_display_message))
                 last_pp_message = current_display_message
 
-            # Periodic defensive resync to ProPresenter while running only (every 10 seconds)
+            # Periodic defensive resync to ProPresenter while running (every 10 seconds).
             # Prevents minor genuine clock drift, but not urgent now that sync() uses absolute values
             if state.status == "running" and tick_count % 10 == 0:
                 asyncio.create_task(pp_client.sync(
@@ -146,6 +302,14 @@ async def ticking_loop():
                     remaining=state.remaining,
                     status=state.status
                 ))
+
+            # While idle with the countdown running, the stage message IS a live MM:SS clock
+            # (format_service_countdown_message), so it changes - and needs pushing - every
+            # single second, with an immediate timer-box resync each time to counteract
+            # ProPresenter's own timer-reset-on-message side effect (see
+            # push_countdown_message_and_resync).
+            if state.status == "idle" and countdown_remaining is not None and current_display_message != last_pp_message:
+                asyncio.create_task(push_countdown_message_and_resync(current_display_message, countdown_remaining))
 
             tick_count += 1
             await asyncio.sleep(1.0)
@@ -221,12 +385,16 @@ async def get_timer_state():
     state_dict["queue_position"] = queue["current_index"] + 1 if queue["names"] else None
     state_dict["queue_length"] = len(queue["names"]) if queue["names"] else None
     state_dict["queue_names"] = queue["names"]
+    state_dict["service_countdown"] = get_service_countdown_state()
     return state_dict
 
 
 @app.post("/api/timer/start")
 async def start_timer(request: StartRequest) -> TimerStateModel:
     """Start timer with optional name/duration."""
+    if request.unplanned:
+        global unplanned_segment_active
+        unplanned_segment_active = True
     state = engine.start(name=request.name, duration=request.duration)
     await manager.broadcast(state.to_dict())
     # Sync to ProPresenter asynchronously using absolute values
@@ -389,6 +557,42 @@ async def update_settings_endpoint(settings: SettingsModel) -> SettingsModel:
     return settings
 
 
+@app.get("/api/service-countdown")
+async def get_service_countdown_endpoint() -> ServiceCountdownModel:
+    """Get the configured service-start countdown (target time + enabled toggle)."""
+    return ServiceCountdownModel(**service_countdown)
+
+
+@app.put("/api/service-countdown")
+async def update_service_countdown_endpoint(payload: ServiceCountdownModel) -> ServiceCountdownModel:
+    """Update the service-start countdown target time / enabled toggle and persist it."""
+    from fastapi import HTTPException
+
+    if payload.target_time is not None:
+        try:
+            hour, minute = map(int, payload.target_time.split(":"))
+            if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                raise ValueError
+        except ValueError:
+            raise HTTPException(status_code=400, detail="target_time must be in HH:MM 24-hour format")
+
+    if payload.enabled and payload.recurrence == "weekly" and (payload.weekday is None or payload.target_time is None):
+        raise HTTPException(status_code=400, detail="weekday and target_time are required for weekly recurrence")
+
+    global service_countdown
+    service_countdown = payload.dict()
+    app_state["service_countdown"] = service_countdown
+    state_manager.save_state(app_state)
+
+    if manager.active_connections:
+        state = engine.state()
+        state_dict = state.to_dict()
+        state_dict["service_countdown"] = get_service_countdown_state()
+        await manager.broadcast(state_dict)
+
+    return payload
+
+
 @app.get("/api/queue")
 async def get_queue() -> QueueModel:
     """Get the current service run-of-show queue."""
@@ -480,6 +684,8 @@ async def advance_queue() -> TimerStateModel:
     if next_index >= len(queue["names"]):
         raise HTTPException(status_code=409, detail="Queue complete - no more segments")
 
+    global unplanned_segment_active
+    unplanned_segment_active = False
     queue["current_index"] = next_index
     segment_name = queue["names"][next_index]
     segment_duration = segments[segment_name]
@@ -519,8 +725,9 @@ async def advance_queue() -> TimerStateModel:
 @app.post("/api/queue/reset")
 async def reset_queue() -> dict:
     """Reset queue to beginning (current_index = -1) for replay."""
-    global queue
+    global queue, unplanned_segment_active
     queue["current_index"] = -1
+    unplanned_segment_active = False
     app_state["queue"] = queue
 
     # Reset timer to idle state with 0 duration
@@ -557,7 +764,7 @@ async def reset_queue() -> dict:
 @app.post("/api/queue/start-at/{index}")
 async def start_at_queue_index(index: int) -> dict:
     """Start service from a specific segment in the queue."""
-    global queue
+    global queue, unplanned_segment_active
 
     # Validate index
     if index < 0 or index >= len(queue["names"]):
@@ -568,6 +775,7 @@ async def start_at_queue_index(index: int) -> dict:
     # The clicked segment is now the current/playing one (matches advance_queue's
     # convention: current_index always points at the currently-playing segment).
     queue["current_index"] = index
+    unplanned_segment_active = False
     app_state["queue"] = queue
 
     # Find segment duration (stored in seconds)
@@ -608,7 +816,7 @@ async def start_at_queue_index(index: int) -> dict:
 @app.post("/api/queue/load-template/{template_name}")
 async def load_template_to_queue(template_name: str) -> dict:
     """Load a template's segments into the queue and reset timer to idle state."""
-    global queue
+    global queue, unplanned_segment_active
 
     if template_name not in templates:
         return {"success": False, "error": f"Template not found: {template_name}"}
@@ -625,6 +833,7 @@ async def load_template_to_queue(template_name: str) -> dict:
     # Load segments into queue
     queue["names"] = segment_names.copy()
     queue["current_index"] = -1  # Reset to beginning
+    unplanned_segment_active = False
     app_state["queue"] = queue
     state_manager.save_state(app_state)
 

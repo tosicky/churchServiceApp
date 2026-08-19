@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { SegmentLibraryPanel } from './SegmentLibraryPanel';
 import { NetworkPanel } from './NetworkPanel';
+import { ServiceCountdownPanel } from './ServiceCountdownPanel';
 import { ShortcutsLegend } from './ShortcutsLegend';
 import { Card } from '../ui/Card';
 import { Button } from '../ui/Button';
@@ -29,6 +30,10 @@ export function SetupTab({ onTemplateLoaded }: SetupTabProps) {
 
       <Card>
         <SegmentLibraryPanel />
+      </Card>
+
+      <Card>
+        <ServiceCountdownPanel />
       </Card>
 
       <Card>
