@@ -16,6 +16,7 @@ export interface TimerState {
     weekday: string | null;
     resolved_target_timestamp: number | null;
   } | null;
+  connected_clients?: number;
 }
 
 export async function getTimerState(): Promise<TimerState> {

@@ -1,3 +1,4 @@
+import math
 import time
 from typing import Callable, Optional, Literal
 from dataclasses import dataclass
@@ -34,8 +35,11 @@ class TimerEngine:
     def state(self) -> TimerState:
         """Compute current state, deriving remaining and status from elapsed time."""
         if self._target_end is not None:
-            # Timer is running or was completed, compute remaining from target
-            remaining = int(self._target_end - self.clock())
+            # Timer is running or was completed, compute remaining from target. Uses floor,
+            # not int() (which truncates toward zero): int(-0.5) is 0, not -1, which would
+            # freeze the display at "0:00" for up to a full extra second after expiry before
+            # ever showing "-0:01" - floor keeps it decreasing monotonically through zero.
+            remaining = math.floor(self._target_end - self.clock())
             # Determine status based on sign of remaining
             if remaining <= 0 and self.status != "paused":
                 computed_status: Literal["idle", "running", "paused", "completed"] = "completed"
@@ -78,8 +82,8 @@ class TimerEngine:
     def pause(self) -> TimerState:
         """Pause the timer, freezing current remaining time."""
         if self._target_end is not None:
-            # Timer is running/completed, freeze the computed remaining
-            self._frozen_remaining = int(self._target_end - self.clock())
+            # Timer is running/completed, freeze the computed remaining (floor - see state())
+            self._frozen_remaining = math.floor(self._target_end - self.clock())
             self._target_end = None
         self.status = "paused"
         return self.state()

@@ -193,40 +193,36 @@ def get_service_countdown_remaining() -> int | None:
 
 
 async def push_stage_message_and_resync(text: str) -> None:
-    """Send a stage message to ProPresenter, then immediately re-push the absolute timer state.
+    """Send a stage message to ProPresenter, then immediately resync whichever timer is
+    actually showing on stage right now.
 
     ProPresenter resets its timer as a side effect of receiving a stage message, so every
-    stage message push must be followed by a resync to avoid visibly hiccuping a live countdown.
-    Also updates last_pp_message so the ticking loop doesn't redundantly re-send the same text.
+    push must be followed by a resync of the CORRECT target or it visibly clobbers the wrong
+    one - e.g. sending a custom message while the pre-service countdown is up would otherwise
+    reset the countdown's timer box to the idle segment engine's 0:00 instead of leaving it
+    alone. Also updates last_pp_message so the ticking loop doesn't redundantly re-send the
+    same text.
     """
     global last_pp_message
     await pp_client.send_stage_message(text)
     last_pp_message = text
+
     current = engine.state()
+    countdown_remaining = get_service_countdown_remaining()
+    if current.status == "idle" and countdown_remaining is not None:
+        await pp_client.sync(
+            name="Service Starts In",
+            duration=countdown_remaining,
+            remaining=countdown_remaining,
+            status="running",
+            allows_overrun=False,
+        )
+        return
     await pp_client.sync(
         name=current.name,
         duration=current.duration,
         remaining=current.remaining,
         status=current.status
-    )
-
-
-async def push_countdown_message_and_resync(text: str, remaining: int) -> None:
-    """Same idea as push_stage_message_and_resync, but for the pre-service countdown's own
-    synthetic timer box rather than the segment engine's. The message now embeds a live MM:SS
-    clock (see format_service_countdown_message) that changes every second, and every push
-    resets ProPresenter's timer as a side effect - so the resync has to follow immediately
-    every single time, not just periodically, or the on-screen timer would visibly stutter.
-    """
-    global last_pp_message
-    await pp_client.send_stage_message(text)
-    last_pp_message = text
-    await pp_client.sync(
-        name="Service Starts In",
-        duration=remaining,
-        remaining=remaining,
-        status="running",
-        allows_overrun=False,
     )
 
 
@@ -267,12 +263,18 @@ async def ticking_loop():
 
             state = engine.state()
             countdown_state = get_service_countdown_state()
-            countdown_remaining = get_service_countdown_remaining()
             # Broadcast if timer is in a ticking state, or the service countdown is enabled.
             # The countdown itself ticks client-side (see get_service_countdown_state), but a
             # Display page that connects *after* the operator enabled it still needs to learn
             # {enabled, target_time} promptly rather than waiting on an unrelated broadcast.
-            if (state.status in ("running", "completed") or countdown_state["enabled"]) and manager.active_connections:
+            # Also broadcast at least every 10s regardless (tick_count % 10) purely to prune
+            # dead connections: a WebSocket that silently dies (WiFi drop, tab closed, dev-proxy
+            # hiccup) is only detected when a *write* to it fails, so with nothing else
+            # triggering a broadcast during a fully idle session, a stale connection could
+            # otherwise sit forever, inflating connected_clients indefinitely.
+            if (
+                state.status in ("running", "completed") or countdown_state["enabled"] or tick_count % 10 == 0
+            ) and manager.active_connections:
                 state_dict = state.to_dict()
                 # Add queue info and COMPUTED display message (handles expiration) to broadcast
                 state_dict["next_segment_name"] = get_next_segment_name()
@@ -284,32 +286,30 @@ async def ticking_loop():
                     "expires_at": stage_message.get("expires_at")
                 }
                 state_dict["service_countdown"] = countdown_state
+                state_dict["connected_clients"] = len(manager.active_connections)
                 await manager.broadcast(state_dict)
 
-            # Sync stage message to ProPresenter if it changed (e.g., expired custom message
-            # reverted to "Coming Next"). Do this every tick while the timer is active, to
-            # catch changes immediately.
-            if state.status in ("running", "paused") and current_display_message != last_pp_message:
-                asyncio.create_task(pp_client.send_stage_message(current_display_message))
-                last_pp_message = current_display_message
+            # Keep ProPresenter's stage message in sync with our computed display text
+            # whenever it changes - regardless of timer status - and always follow with an
+            # immediate resync of whichever timer is actually on stage right now (see
+            # push_stage_message_and_resync), since ProPresenter resets its timer as a side
+            # effect of any message push. Deliberately NOT gated on status=="running"/"paused":
+            # a custom message's auto-expiry (or the countdown's live MM:SS clock, which
+            # changes every second while active) has to reach the stage screen even while
+            # fully idle with nothing else going on, or it just sits there stale.
+            if current_display_message != last_pp_message:
+                asyncio.create_task(push_stage_message_and_resync(current_display_message))
 
-            # Periodic defensive resync to ProPresenter while running (every 10 seconds).
-            # Prevents minor genuine clock drift, but not urgent now that sync() uses absolute values
-            if state.status == "running" and tick_count % 10 == 0:
+            # Periodic defensive resync to ProPresenter while running or in overtime (every 10
+            # seconds). Prevents minor genuine clock drift, but not urgent now that sync() uses
+            # absolute values.
+            if state.status in ("running", "completed") and tick_count % 10 == 0:
                 asyncio.create_task(pp_client.sync(
                     name=state.name,
                     duration=state.duration,
                     remaining=state.remaining,
                     status=state.status
                 ))
-
-            # While idle with the countdown running, the stage message IS a live MM:SS clock
-            # (format_service_countdown_message), so it changes - and needs pushing - every
-            # single second, with an immediate timer-box resync each time to counteract
-            # ProPresenter's own timer-reset-on-message side effect (see
-            # push_countdown_message_and_resync).
-            if state.status == "idle" and countdown_remaining is not None and current_display_message != last_pp_message:
-                asyncio.create_task(push_countdown_message_and_resync(current_display_message, countdown_remaining))
 
             tick_count += 1
             await asyncio.sleep(1.0)
@@ -369,16 +369,20 @@ app.add_middleware(
 )
 
 
-@app.get("/api/timer/state")
-async def get_timer_state():
-    """Get current timer state with additional metadata."""
+def build_full_state_dict() -> dict:
+    """Assemble the complete state payload: timer + queue + stage message + service countdown
+    + connected-client count. Shared by the REST snapshot endpoint, the one-off personal
+    message a client gets the instant its WebSocket connects, and the periodic broadcast - so
+    a freshly-connected (or reconnected) client is immediately fully in sync rather than
+    waiting on the next tick, which for a fully idle session with no countdown enabled might
+    never come at all.
+    """
     state = engine.state()
     state_dict = state.to_dict()
-    # Add the COMPUTED display message (handles expiration and fallback to "Coming Next")
-    # not the raw stage_message state
-    display_message_text = get_display_stage_message()
+    # COMPUTED display message (handles expiration and fallback to "Coming Next"), not the raw
+    # stage_message state
     state_dict["stage_message"] = {
-        "text": display_message_text,
+        "text": get_display_stage_message(),
         "expires_at": stage_message.get("expires_at")  # include expiry for UI countdown
     }
     state_dict["next_segment_name"] = get_next_segment_name()
@@ -386,7 +390,14 @@ async def get_timer_state():
     state_dict["queue_length"] = len(queue["names"]) if queue["names"] else None
     state_dict["queue_names"] = queue["names"]
     state_dict["service_countdown"] = get_service_countdown_state()
+    state_dict["connected_clients"] = len(manager.active_connections)
     return state_dict
+
+
+@app.get("/api/timer/state")
+async def get_timer_state():
+    """Get current timer state with additional metadata."""
+    return build_full_state_dict()
 
 
 @app.post("/api/timer/start")
@@ -1038,14 +1049,10 @@ async def clear_stage_message() -> dict:
 async def websocket_timer(websocket: WebSocket):
     """WebSocket connection for real-time timer state broadcasts."""
     await manager.connect(websocket)
-    # Send current state immediately upon connection
-    state = engine.state()
-    state_dict = state.to_dict()
-    state_dict["next_segment_name"] = get_next_segment_name()
-    state_dict["queue_position"] = queue["current_index"] + 1 if queue["names"] else None
-    state_dict["queue_length"] = len(queue["names"]) if queue["names"] else None
-    state_dict["queue_names"] = queue["names"]
-    await manager.send_personal(websocket, state_dict)
+    # Send the full current state immediately upon connection - not just the timer/queue
+    # basics, but stage_message and service_countdown too, so a freshly-opened Display page
+    # doesn't sit blank waiting for a periodic broadcast that might not come for a while.
+    await manager.send_personal(websocket, build_full_state_dict())
 
     try:
         # Keep connection open, discard any incoming messages (control is REST-only)
@@ -1056,6 +1063,11 @@ async def websocket_timer(websocket: WebSocket):
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
         manager.disconnect(websocket)
+    finally:
+        # Let remaining clients know the connected-client count just changed, so it doesn't
+        # sit stale until some unrelated broadcast happens to fire.
+        if manager.active_connections:
+            await manager.broadcast(build_full_state_dict())
 
 
 # Note: Frontend is served by nginx (in Docker) or Vite dev server (local dev)

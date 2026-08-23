@@ -93,6 +93,22 @@ export function useServiceQueue(liveNames?: string[], liveCurrentIndex?: number)
     }
   };
 
+  // Jumps to (and starts) an arbitrary queue position - used both for the "Back" transport
+  // control (index - 1) and for clicking a specific segment in the run-of-show list.
+  const startAtIndex = async (index: number) => {
+    try {
+      const response = await fetch(`/api/queue/start-at/${index}`, { method: 'POST' });
+      if (response.ok) {
+        await fetchQueue();
+        return true;
+      }
+      return false;
+    } catch (e) {
+      console.error('Failed to start at queue index:', e);
+      return false;
+    }
+  };
+
   const addToQueue = (segmentName: string) => {
     const newNames = [...queue.names, segmentName];
     return updateQueue(newNames);
@@ -122,6 +138,7 @@ export function useServiceQueue(liveNames?: string[], liveCurrentIndex?: number)
     lockedCount,
     updateQueue,
     advanceQueue,
+    startAtIndex,
     addToQueue,
     removeFromQueue,
     moveInQueue,

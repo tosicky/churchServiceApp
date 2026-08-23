@@ -41,11 +41,15 @@ class ProPresenterClient:
             return
 
         try:
-            if status == "running":
-                # Tell ProPresenter to count down live from the exact remaining time, starting now
+            if status in ("running", "completed"):
+                # Tell ProPresenter to count down live from the exact remaining time, starting
+                # now. "completed" belongs here too, not with idle/paused below: in this app it
+                # means "actively counting into negative overtime", not "stopped" - resyncing it
+                # via reset() (a static, non-ticking display) is what was freezing the stage
+                # screen's timer any time a stage message got sent while a segment was overtime.
                 await self.start(remaining, allows_overrun=allows_overrun)
             else:
-                # idle, paused, completed -> static display at the exact remaining value
+                # idle, paused -> static display at the exact remaining value
                 await self.reset(remaining, allows_overrun=allows_overrun)
         except Exception as e:
             logger.warning(f"ProPresenter sync failed: {e}")
@@ -120,7 +124,12 @@ class ProPresenterClient:
             response = await self.client.get(url)
             response.raise_for_status()
             return True
-        except Exception:
+        except Exception as e:
+            # Silently returning False here previously gave zero visibility into *why* PP
+            # shows offline - wrong timer name (404), connection refused, timeout, etc. all
+            # looked identical from the UI. Log it so the actual cause shows up in
+            # `docker compose logs backend` (runs every 5s while PP stays unreachable).
+            logger.warning(f"ProPresenter health check failed ({url}): {e!r}")
             return False
 
     def update_settings(self, new_settings: dict):

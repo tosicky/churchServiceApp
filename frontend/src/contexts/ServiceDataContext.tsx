@@ -26,6 +26,7 @@ interface ServiceDataContextValue {
   lockedCount: number;
   updateQueue: (names: string[]) => Promise<boolean>;
   advanceQueue: () => Promise<boolean>;
+  startAtIndex: (index: number) => Promise<boolean>;
   addToQueue: (segmentName: string) => Promise<boolean>;
   removeFromQueue: (index: number) => Promise<boolean>;
   moveInQueue: (fromIndex: number, toIndex: number) => Promise<boolean>;
@@ -55,6 +56,7 @@ export function ServiceDataProvider({ children }: { children: ReactNode }) {
     lockedCount,
     updateQueue,
     advanceQueue,
+    startAtIndex,
     addToQueue,
     removeFromQueue,
     moveInQueue,
@@ -79,6 +81,7 @@ export function ServiceDataProvider({ children }: { children: ReactNode }) {
         lockedCount,
         updateQueue,
         advanceQueue,
+        startAtIndex,
         addToQueue,
         removeFromQueue,
         moveInQueue,

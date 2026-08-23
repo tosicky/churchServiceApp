@@ -14,6 +14,7 @@ import { useServiceData } from '../../contexts/ServiceDataContext';
 import { SortableQueueItem } from '../SortableQueueItem';
 import { Button } from '../ui/Button';
 import { Alert } from '../ui/Alert';
+import { Field, inputClass } from '../ui/Field';
 
 export function RunOfShowPanel() {
   const {
@@ -24,26 +25,50 @@ export function RunOfShowPanel() {
     lockedCount,
     moveInQueue,
     removeFromQueue,
+    startAtIndex,
     refetchQueue,
+    addSegment,
+    addToQueue,
   } = useServiceData();
 
   const [loading, setLoading] = useState(false);
   const [startAtError, setStartAtError] = useState<string | null>(null);
 
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newSegmentName, setNewSegmentName] = useState('');
+  const [newSegmentDuration, setNewSegmentDuration] = useState(10);
+  const [addingSegment, setAddingSegment] = useState(false);
+  const [addSegmentError, setAddSegmentError] = useState<string | null>(null);
+
+  const handleAddSegment = async () => {
+    const name = newSegmentName.trim();
+    if (!name) return;
+    setAddingSegment(true);
+    setAddSegmentError(null);
+    try {
+      const created = await addSegment(name, Math.round(newSegmentDuration * 60));
+      if (!created) {
+        setAddSegmentError('Failed to create segment');
+        return;
+      }
+      const queued = await addToQueue(name);
+      if (!queued) {
+        setAddSegmentError(`"${name}" was created in the segment library, but couldn't be added to the queue`);
+        return;
+      }
+      setNewSegmentName('');
+      setNewSegmentDuration(10);
+      setShowAddForm(false);
+    } finally {
+      setAddingSegment(false);
+    }
+  };
+
   const handleStartAtSegment = async (index: number) => {
     setLoading(true);
     try {
-      const response = await fetch(`/api/queue/start-at/${index}`, { method: 'POST' });
-      if (response.ok) {
-        await refetchQueue();
-        setStartAtError(null);
-      } else {
-        const data = await response.json();
-        setStartAtError(data.error || 'Failed to start at segment');
-      }
-    } catch (e) {
-      console.error('Start at segment failed:', e);
-      setStartAtError('Failed to start at segment');
+      const success = await startAtIndex(index);
+      setStartAtError(success ? null : 'Failed to start at segment');
     } finally {
       setLoading(false);
     }
@@ -74,6 +99,11 @@ export function RunOfShowPanel() {
   };
 
   const handleReplayQueue = async () => {
+    // Only worth confirming once the service is actually underway - resetting an
+    // untouched queue destroys nothing.
+    if (queue.current_index > -1 && !confirm('Restart the queue from the beginning? This stops the current segment.')) {
+      return;
+    }
     setLoading(true);
     try {
       const response = await fetch('/api/queue/reset', { method: 'POST' });
@@ -111,9 +141,16 @@ export function RunOfShowPanel() {
 
   return (
     <div className="space-y-3">
-      <h3 className="text-sm font-semibold text-content-secondary">
-        Today's Run of Show ({queue.names.length} segment{queue.names.length !== 1 ? 's' : ''})
-      </h3>
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold text-content-secondary">
+          Today's Run of Show ({queue.names.length} segment{queue.names.length !== 1 ? 's' : ''})
+        </h3>
+        {!showAddForm && (
+          <Button onClick={() => setShowAddForm(true)} variant="primary" size="sm">
+            + Add Segment
+          </Button>
+        )}
+      </div>
 
       {queueError && (
         <Alert tone="error" onDismiss={clearQueueError}>
@@ -126,9 +163,56 @@ export function RunOfShowPanel() {
         </Alert>
       )}
 
+      {showAddForm && (
+        <div className="space-y-3 p-4 rounded-lg bg-accent-soft border border-accent/30">
+          <h4 className="font-semibold text-sm text-content">Add Segment to Run of Show</h4>
+          <p className="text-xs text-content-secondary">
+            Creates it in the segment library and appends it to the end of the queue - no need to visit Setup.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="Segment Name">
+              <input
+                type="text"
+                value={newSegmentName}
+                onChange={(e) => setNewSegmentName(e.target.value)}
+                placeholder="e.g., Special Announcement"
+                disabled={addingSegment}
+                className={inputClass}
+              />
+            </Field>
+            <Field label="Duration (minutes)">
+              <input
+                type="number"
+                value={newSegmentDuration}
+                onChange={(e) => setNewSegmentDuration(Math.max(1, parseInt(e.target.value) || 1))}
+                disabled={addingSegment}
+                min="1"
+                className={inputClass}
+              />
+            </Field>
+          </div>
+          {addSegmentError && <Alert tone="error">{addSegmentError}</Alert>}
+          <div className="grid grid-cols-2 gap-2">
+            <Button onClick={handleAddSegment} disabled={addingSegment || !newSegmentName.trim()} variant="primary">
+              {addingSegment ? 'Adding...' : 'Add to Queue'}
+            </Button>
+            <Button
+              onClick={() => {
+                setShowAddForm(false);
+                setAddSegmentError(null);
+              }}
+              disabled={addingSegment}
+              variant="secondary"
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+
       {queue.names.length === 0 ? (
         <p className="text-sm text-content-secondary text-center py-6">
-          Queue is empty. Add segments or load a template from the Setup tab.
+          Queue is empty. Add a segment above, or load a template from the Setup tab.
         </p>
       ) : (
         <>
