@@ -6,11 +6,12 @@ import { DesktopTabSwitcher, type TabId } from './TabBar';
 interface AppHeaderProps {
   connected: boolean;
   ppConnected?: boolean;
+  connectedClients?: number;
   activeTab: TabId;
   onTabChange: (tab: TabId) => void;
 }
 
-export function AppHeader({ connected, ppConnected, activeTab, onTabChange }: AppHeaderProps) {
+export function AppHeader({ connected, ppConnected, connectedClients, activeTab, onTabChange }: AppHeaderProps) {
   const { theme, toggleTheme } = useTheme();
 
   return (
@@ -21,7 +22,7 @@ export function AppHeader({ connected, ppConnected, activeTab, onTabChange }: Ap
         </div>
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
           <DesktopTabSwitcher active={activeTab} onChange={onTabChange} />
-          <ConnectionBadge wsConnected={connected} ppConnected={ppConnected} showPP={true} />
+          <ConnectionBadge wsConnected={connected} ppConnected={ppConnected} showPP={true} connectedClients={connectedClients} />
           <IconButton onClick={toggleTheme} title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}>
             {theme === 'light' ? '🌙' : '☀️'}
           </IconButton>

@@ -50,6 +50,12 @@ export function TemplatesModal({ isOpen, onClose, onTemplateLoaded }: TemplatesM
   };
 
   const handleLoadTemplate = async (templateName: string, segmentNames: string[]) => {
+    // Loading a template replaces the entire queue - confirm if the current one is actually
+    // underway, so a stray tap mid-service can't silently wipe it.
+    if (queue.current_index > -1 && !confirm(`Load "${templateName}"? This replaces the current queue and stops the running segment.`)) {
+      return;
+    }
+
     // The broadcasting load endpoint doesn't validate segments still exist (unlike the
     // non-broadcasting one it replaced here) - check client-side first, since we already
     // have the current segment library from the shared context.

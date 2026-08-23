@@ -58,6 +58,7 @@ function ControllerPageInner() {
         <AppHeader
           connected={connected}
           ppConnected={state?.propresenter_connected}
+          connectedClients={state?.connected_clients}
           activeTab={activeTab}
           onTabChange={handleTabChange}
         />

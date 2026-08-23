@@ -1,6 +1,10 @@
-upstream backend {
-    server backend:8000;
-}
+# DNS_RESOLVER is filled in by docker-entrypoint.sh at container startup (detected from
+# /etc/resolv.conf, since Docker and Podman each run their embedded DNS at a different
+# address). `resolver` + a variable in proxy_pass (rather than a bare hostname) makes nginx
+# re-resolve "backend" on every request instead of caching whatever IP it had when nginx
+# itself started - so the frontend keeps working without needing a restart of its own every
+# time the backend container gets rebuilt/recreated on its own.
+resolver ${DNS_RESOLVER} valid=10s;
 
 server {
     listen 80;
@@ -14,9 +18,16 @@ server {
         try_files $uri $uri/ /index.html;
     }
 
+    # nginx's stock mime.types doesn't map this extension on every base image version -
+    # force it explicitly so Chrome/Android don't silently ignore the PWA manifest.
+    location = /manifest.webmanifest {
+        default_type application/manifest+json;
+    }
+
     # Proxy /api to backend
     location /api {
-        proxy_pass http://backend;
+        set $backend_upstream backend:8000;
+        proxy_pass http://$backend_upstream;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -28,7 +39,8 @@ server {
 
     # Proxy /ws to backend for WebSocket
     location /ws {
-        proxy_pass http://backend;
+        set $backend_upstream backend:8000;
+        proxy_pass http://$backend_upstream;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
