@@ -32,6 +32,9 @@ class SettingsModel(BaseModel):
     propresenter_port: int
     propresenter_timer_name: str
     server_address: str
+    timezone: str = "UTC"  # IANA zone (e.g. "America/Moncton"), used only by the "weekly"
+    # recurring service-start countdown to resolve "next Sunday at X" - set from the Setup UI,
+    # not server env/infra config, so it's never silently missing on a fresh deployment
 
 
 class QueueModel(BaseModel):

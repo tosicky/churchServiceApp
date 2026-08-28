@@ -74,6 +74,7 @@ class StateManager:
                 "propresenter_port": int(os.environ.get("PROPRESENTER_PORT", "61767")),
                 "propresenter_timer_name": os.environ.get("PROPRESENTER_TIMER_NAME", "Segment Countdown"),
                 "server_address": "",  # Operator sets this once for QR code sharing
+                "timezone": "UTC",  # Operator sets this via Setup for weekly recurrence
             },
             "segments": {
                 "Praise and Worship": 900,      # 15 minutes
