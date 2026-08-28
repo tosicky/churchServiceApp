@@ -6,6 +6,7 @@ export interface Settings {
   propresenter_port: number;
   propresenter_timer_name: string;
   server_address: string;
+  timezone: string;
 }
 
 export function useSettings() {

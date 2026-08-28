@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import patch
 from app.timer_engine import TimerEngine
 
 
@@ -197,3 +198,163 @@ class TestTimerEngine:
         engine.set_propresenter_connected(True)
         state = engine.state()
         assert state.propresenter_connected is True
+
+
+class TestTimerEnginePersistence:
+    """Persist/restore across a simulated process restart - get_persistable_state() uses real
+    wall-clock time.time(), independent of the injectable monotonic `clock`, so these tests
+    patch time.time() directly to control it precisely.
+    """
+
+    def fake_clock(self):
+        if not hasattr(self, "_fake_time"):
+            self._fake_time = 0.0
+        return self._fake_time
+
+    def advance_time(self, seconds: float):
+        self._fake_time += seconds
+
+    def test_persistable_state_idle(self):
+        engine = TimerEngine(clock=self.fake_clock)
+        data = engine.get_persistable_state()
+        assert data == {
+            "name": "Service",
+            "duration": 0,
+            "status": "idle",
+            "frozen_remaining": 0,
+            "target_timestamp": None,
+        }
+
+    def test_persistable_state_running_has_wallclock_target(self):
+        self._fake_time = 0.0
+        engine = TimerEngine(clock=self.fake_clock)
+        engine.start(name="Sermon", duration=60)
+        self.advance_time(20)  # 40s remaining
+
+        with patch("app.timer_engine.time.time", return_value=1_000_000.0):
+            data = engine.get_persistable_state()
+
+        assert data["status"] == "running"
+        assert data["target_timestamp"] == pytest.approx(1_000_040.0)
+
+    def test_restore_running_accounts_for_real_downtime(self):
+        """A segment that was running when the process died should reflect the time that
+        actually passed while it was down, not freeze or "un-elapse" that gap."""
+        self._fake_time = 0.0
+        original = TimerEngine(clock=self.fake_clock)
+        original.start(name="Sermon", duration=60)
+        self.advance_time(20)  # 40s remaining at the moment of "saving"
+
+        with patch("app.timer_engine.time.time", return_value=1_000_000.0):
+            snapshot = original.get_persistable_state()
+
+        # Restore into a brand new engine (simulating a fresh process) after 25s of real
+        # downtime - restored remaining should be 40 - 25 = 15, not a frozen 40.
+        restored = TimerEngine(clock=lambda: 0.0)
+        with patch("app.timer_engine.time.time", return_value=1_000_025.0):
+            restored.restore(snapshot)
+            state = restored.state()
+
+        assert state.status == "running"
+        assert state.name == "Sermon"
+        assert state.remaining == 15
+
+    def test_restore_running_into_overtime_after_long_downtime(self):
+        """If enough real time passed while the process was down that the segment would
+        already be over, restoring should land straight into overtime, not idle/frozen."""
+        self._fake_time = 0.0
+        original = TimerEngine(clock=self.fake_clock)
+        original.start(name="Sermon", duration=60)  # 60s remaining
+
+        with patch("app.timer_engine.time.time", return_value=1_000_000.0):
+            snapshot = original.get_persistable_state()
+
+        # 90 seconds of real downtime - 30s past when it should have ended
+        restored = TimerEngine(clock=lambda: 0.0)
+        with patch("app.timer_engine.time.time", return_value=1_000_090.0):
+            restored.restore(snapshot)
+            state = restored.state()
+
+        assert state.status == "completed"
+        assert state.remaining == -30
+
+    def test_restore_reverts_stale_overtime_to_idle(self):
+        """A segment that's been sitting in overtime for a long time (the previous week's
+        last segment, a forgotten test run, etc.) should NOT be restored as still "completed" -
+        that would silently block anything expecting idle (like the pre-service countdown)
+        until someone happens to notice and manually reset it."""
+        self._fake_time = 0.0
+        original = TimerEngine(clock=self.fake_clock)
+        original.start(name="Dedication", duration=600)
+
+        with patch("app.timer_engine.time.time", return_value=1_000_000.0):
+            snapshot = original.get_persistable_state()
+
+        # 2 hours of "downtime" - well past the 1-hour staleness threshold
+        restored = TimerEngine(clock=lambda: 0.0)
+        with patch("app.timer_engine.time.time", return_value=1_000_000.0 + 7200):
+            restored.restore(snapshot)
+            state = restored.state()
+
+        assert state.status == "idle"
+        assert state.name == "Service"
+        assert state.duration == 0
+        assert state.remaining == 0
+
+    def test_restore_just_under_stale_threshold_still_restores(self):
+        """The boundary case: overtime just short of the threshold should still restore as
+        completed/overtime, not revert - only genuinely long-stale state reverts."""
+        self._fake_time = 0.0
+        original = TimerEngine(clock=self.fake_clock)
+        original.start(name="Sermon", duration=60)
+
+        with patch("app.timer_engine.time.time", return_value=1_000_000.0):
+            snapshot = original.get_persistable_state()
+
+        # 60s duration + 59 minutes overtime = 1 second under the 1-hour threshold
+        restored = TimerEngine(clock=lambda: 0.0)
+        with patch("app.timer_engine.time.time", return_value=1_000_060.0 + 3599):
+            restored.restore(snapshot)
+            state = restored.state()
+
+        assert state.status == "completed"
+        assert state.name == "Sermon"
+        assert state.remaining == -3599
+
+    def test_restore_paused_stays_frozen_regardless_of_downtime(self):
+        self._fake_time = 0.0
+        original = TimerEngine(clock=self.fake_clock)
+        original.start(duration=60)
+        self.advance_time(20)
+        original.pause()  # frozen at 40
+
+        with patch("app.timer_engine.time.time", return_value=1_000_000.0):
+            snapshot = original.get_persistable_state()
+
+        restored = TimerEngine(clock=lambda: 0.0)
+        with patch("app.timer_engine.time.time", return_value=1_000_500.0):  # 500s "downtime"
+            restored.restore(snapshot)
+            state = restored.state()
+
+        assert state.status == "paused"
+        assert state.remaining == 40
+
+    def test_restore_idle_preserves_name_and_duration(self):
+        engine = TimerEngine(clock=self.fake_clock)
+        engine.name = "Sermon"
+        engine.duration = 1800
+        engine.status = "idle"
+        engine._frozen_remaining = 1800
+
+        with patch("app.timer_engine.time.time", return_value=1_000_000.0):
+            snapshot = engine.get_persistable_state()
+
+        restored = TimerEngine(clock=lambda: 0.0)
+        with patch("app.timer_engine.time.time", return_value=1_000_050.0):
+            restored.restore(snapshot)
+            state = restored.state()
+
+        assert state.status == "idle"
+        assert state.name == "Sermon"
+        assert state.duration == 1800
+        assert state.remaining == 1800

@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 import socket
 import time
 from contextlib import asynccontextmanager
@@ -100,16 +99,18 @@ WEEKDAY_NUMBERS = {
 
 
 def get_server_timezone() -> ZoneInfo:
-    """The IANA zone the SERVER should treat as "local" for weekly recurrence, from the TZ
-    env var (see docker-compose.yml). Defaults to UTC if unset, rather than silently guessing
-    a specific city - an explicit UTC display is at least obviously wrong if misconfigured,
-    where a wrong-but-plausible local time could go unnoticed for weeks.
+    """The IANA zone the SERVER should treat as "local" for weekly recurrence, from the
+    "timezone" app setting (Setup UI, persisted in state.json) - not server env/infra config,
+    so there's no .env file or docker-compose variable to forget on a fresh deployment; it's
+    right there in the same UI as everything else and survives a rebuild via the normal data
+    volume. Defaults to UTC, same as every other never-configured setting in this app - an
+    obviously-wrong display is preferable to silently guessing a specific venue.
     """
-    tz_name = os.environ.get("TZ", "UTC")
+    tz_name = app_state["settings"].get("timezone", "UTC")
     try:
         return ZoneInfo(tz_name)
     except Exception:
-        logger.warning(f"Unknown TZ '{tz_name}', falling back to UTC")
+        logger.warning(f"Unknown timezone setting '{tz_name}', falling back to UTC")
         return ZoneInfo("UTC")
 
 
@@ -240,6 +241,15 @@ queue = app_state["queue"]
 templates = app_state.get("templates", {})  # Handle old state files without templates key
 stage_message = app_state.get("stage_message", {"text": "", "expires_at": None, "auto": False})  # Handle old state files
 service_countdown = app_state.get("service_countdown", {"enabled": False, "target_time": None, "target_timestamp": None})  # Handle old state files
+
+# Restore the timer itself (name/duration/status/remaining) from its last persisted snapshot,
+# so a backend restart mid-service doesn't reset the Display page to a blank "Service 0:00"
+# while the queue list still correctly shows a segment as current. Uses a wall-clock-anchored
+# timestamp (see TimerEngine.restore), so a segment that was running keeps counting from where
+# it truly is right now - including straight into overtime if enough real downtime passed -
+# rather than freezing at its last-saved value.
+if "timer" in app_state:
+    engine.restore(app_state["timer"])
 
 # Apply persisted ProPresenter settings
 pp_client.update_settings(app_state["settings"])
@@ -394,6 +404,18 @@ def build_full_state_dict() -> dict:
     return state_dict
 
 
+def persist_timer_state() -> None:
+    """Save the engine's current state to disk, wall-clock-anchored (see
+    TimerEngine.get_persistable_state), so it can be correctly restored on the next startup.
+    Called after every action that actually changes the timer (start/pause/reset/add/subtract,
+    plus the queue actions that start/reset it) - never from the per-second ticking loop, since
+    a wall-clock-anchored snapshot stays exactly accurate for as long as nothing changes, with
+    no need to re-save it while a segment just sits there counting down on its own.
+    """
+    app_state["timer"] = engine.get_persistable_state()
+    state_manager.save_state(app_state)
+
+
 @app.get("/api/timer/state")
 async def get_timer_state():
     """Get current timer state with additional metadata."""
@@ -407,6 +429,7 @@ async def start_timer(request: StartRequest) -> TimerStateModel:
         global unplanned_segment_active
         unplanned_segment_active = True
     state = engine.start(name=request.name, duration=request.duration)
+    persist_timer_state()
     await manager.broadcast(state.to_dict())
     # Sync to ProPresenter asynchronously using absolute values
     asyncio.create_task(pp_client.sync(
@@ -422,6 +445,7 @@ async def start_timer(request: StartRequest) -> TimerStateModel:
 async def pause_timer() -> TimerStateModel:
     """Pause the timer."""
     state = engine.pause()
+    persist_timer_state()
     await manager.broadcast(state.to_dict())
     # Sync to ProPresenter asynchronously using absolute values (ensures exact frozen value)
     asyncio.create_task(pp_client.sync(
@@ -437,6 +461,7 @@ async def pause_timer() -> TimerStateModel:
 async def reset_timer() -> TimerStateModel:
     """Reset timer to initial duration."""
     state = engine.reset()
+    persist_timer_state()
     await manager.broadcast(state.to_dict())
     # Sync to ProPresenter asynchronously using absolute values
     asyncio.create_task(pp_client.sync(
@@ -452,6 +477,7 @@ async def reset_timer() -> TimerStateModel:
 async def add_time(request: AdjustRequest) -> TimerStateModel:
     """Add time to the timer."""
     state = engine.add(request.seconds)
+    persist_timer_state()
     await manager.broadcast(state.to_dict())
     # Sync to ProPresenter asynchronously using absolute values (not relative adjustments)
     asyncio.create_task(pp_client.sync(
@@ -467,6 +493,7 @@ async def add_time(request: AdjustRequest) -> TimerStateModel:
 async def subtract_time(request: AdjustRequest) -> TimerStateModel:
     """Subtract time from the timer."""
     state = engine.subtract(request.seconds)
+    persist_timer_state()
     await manager.broadcast(state.to_dict())
     # Sync to ProPresenter asynchronously using absolute values (not relative adjustments)
     asyncio.create_task(pp_client.sync(
@@ -558,6 +585,13 @@ async def get_settings_endpoint() -> SettingsModel:
 @app.put("/api/settings")
 async def update_settings_endpoint(settings: SettingsModel) -> SettingsModel:
     """Update application settings and persist to disk."""
+    from fastapi import HTTPException
+
+    try:
+        ZoneInfo(settings.timezone)
+    except Exception:
+        raise HTTPException(status_code=400, detail=f"Unknown timezone: {settings.timezone!r}")
+
     new_settings = settings.dict()
     app_state["settings"] = new_settings
     state_manager.save_state(app_state)
@@ -706,8 +740,8 @@ async def advance_queue() -> TimerStateModel:
 
     # Persist queue and timer state
     app_state["queue"] = queue
-    app_state["timer"] = state.to_dict()
     state_manager.save_state(app_state)
+    persist_timer_state()
 
     # Broadcast to all clients
     state_dict = state.to_dict()
@@ -745,8 +779,7 @@ async def reset_queue() -> dict:
     engine.name = ""
     engine.duration = 0
     timer_state = engine.reset()
-    app_state["timer"] = timer_state.to_dict()
-    state_manager.save_state(app_state)
+    persist_timer_state()
 
     # Sync idle timer state to ProPresenter
     asyncio.create_task(pp_client.sync(
@@ -798,8 +831,7 @@ async def start_at_queue_index(index: int) -> dict:
     # Actually start the countdown (not just load it idle) - this is "start at",
     # matching what advance_queue's "Next Segment" does.
     timer_state = engine.start(name=segment_name, duration=duration_seconds)
-    app_state["timer"] = timer_state.to_dict()
-    state_manager.save_state(app_state)
+    persist_timer_state()
 
     # Update stage message to show next segment (if there is one)
     stage_message_text = compute_auto_stage_message_text()
@@ -852,8 +884,7 @@ async def load_template_to_queue(template_name: str) -> dict:
     engine.name = ""
     engine.duration = 0
     timer_state = engine.reset()
-    app_state["timer"] = timer_state.to_dict()
-    state_manager.save_state(app_state)
+    persist_timer_state()
 
     # Sync idle timer to ProPresenter
     asyncio.create_task(pp_client.sync(

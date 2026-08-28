@@ -1,25 +1,55 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useServiceCountdown, targetTimeToTimestamp, type ServiceCountdown, type Weekday } from '../../hooks/useServiceCountdown';
+import { useSettings } from '../../hooks/useSettings';
 import { Field, inputClass } from '../ui/Field';
 import { Button } from '../ui/Button';
 import { Alert } from '../ui/Alert';
 
 const WEEKDAYS: Weekday[] = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
 
+// Modern browsers (Chrome 99+, Safari 17+, Edge) expose the full IANA database directly -
+// no need to ship/maintain our own list. Falls back to a plain text input on anything older.
+function getSupportedTimezones(): string[] {
+  try {
+    const supportedValuesOf = (Intl as unknown as { supportedValuesOf?: (key: string) => string[] }).supportedValuesOf;
+    if (typeof supportedValuesOf === 'function') {
+      return supportedValuesOf('timeZone');
+    }
+  } catch {
+    // fall through to empty list below
+  }
+  return [];
+}
+
 export function ServiceCountdownPanel() {
   const { countdown, loading, error, updateCountdown } = useServiceCountdown();
+  const { settings, updateSettings } = useSettings();
   const [formData, setFormData] = useState<ServiceCountdown | null>(null);
+  const [timezone, setTimezone] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [savedTimezone, setSavedTimezone] = useState<string | null>(null);
 
-  // Sync form data with the loaded countdown once it arrives
+  // Sync form data with the loaded countdown/settings once they arrive
   if (countdown && !formData) {
     setFormData(countdown);
   }
+  if (settings && timezone === null) {
+    setTimezone(settings.timezone);
+  }
 
+  const timezoneOptions = useMemo(() => getSupportedTimezones(), []);
   const isWeekly = formData?.recurrence === 'weekly';
-  const canSave = !!formData && (!formData.enabled || (isWeekly ? !!formData.weekday && !!formData.target_time : !!formData.target_time));
+  // "Use This Device" and picking from the dropdown both only stage a value locally - neither
+  // persists anything by itself. This is the one thing on the page that's easy to mistake for
+  // already being saved, since the field visibly updates right away; call it out explicitly
+  // until the Save button below actually commits it.
+  const timezoneDirty = !!settings && !!timezone && timezone !== settings.timezone;
+  const canSave =
+    !!formData &&
+    (!formData.enabled ||
+      (isWeekly ? !!formData.weekday && !!formData.target_time && !!timezone : !!formData.target_time));
 
   const handleSave = async () => {
     if (!formData) return;
@@ -27,6 +57,13 @@ export function ServiceCountdownPanel() {
       setSaving(true);
       setSaved(false);
       setSaveError(null);
+
+      const savingTimezone = isWeekly && settings && timezone && timezone !== settings.timezone;
+      if (savingTimezone) {
+        await updateSettings({ ...settings, timezone });
+      }
+      setSavedTimezone(savingTimezone ? timezone : null);
+
       const payload: ServiceCountdown =
         formData.recurrence === 'weekly'
           ? { ...formData, target_timestamp: null }
@@ -38,6 +75,11 @@ export function ServiceCountdownPanel() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const detectBrowserTimezone = () => {
+    setSaved(false);
+    setTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone);
   };
 
   return (
@@ -120,11 +162,59 @@ export function ServiceCountdownPanel() {
             </Field>
           )}
 
+          {isWeekly && (
+            <Field
+              label="Server timezone"
+              helper="Weekly recurrence runs unattended, so the server needs to know which timezone to use - no browser is open at 3am to tell it."
+            >
+              <div className="flex gap-2">
+                {timezoneOptions.length > 0 ? (
+                  <select
+                    value={timezone ?? 'UTC'}
+                    onChange={(e) => {
+                      setSaved(false);
+                      setTimezone(e.target.value);
+                    }}
+                    className={inputClass}
+                  >
+                    {!timezoneOptions.includes(timezone ?? 'UTC') && (
+                      <option value={timezone ?? 'UTC'}>{timezone ?? 'UTC'}</option>
+                    )}
+                    {timezoneOptions.map((tz) => (
+                      <option key={tz} value={tz}>
+                        {tz}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    value={timezone ?? ''}
+                    onChange={(e) => {
+                      setSaved(false);
+                      setTimezone(e.target.value);
+                    }}
+                    placeholder="e.g., America/Moncton"
+                    className={inputClass}
+                  />
+                )}
+                <Button onClick={detectBrowserTimezone} variant="secondary" className="whitespace-nowrap">
+                  Use This Device
+                </Button>
+              </div>
+              {timezoneDirty && (
+                <p className="text-xs text-warning mt-1.5">
+                  ⚠ Not saved yet - click Save below to apply "{timezone}" (currently saved: {settings?.timezone}).
+                </p>
+              )}
+            </Field>
+          )}
+
           <Field
             label="Service start time"
             helper={
               isWeekly
-                ? "Uses the server's configured timezone (set via TZ in docker-compose.yml), since it needs to fire automatically each week."
+                ? 'Interpreted in the server timezone set above.'
                 : "Uses this device's local clock at the moment you save."
             }
           >
@@ -140,7 +230,9 @@ export function ServiceCountdownPanel() {
           </Field>
 
           {saveError && <Alert tone="error">{saveError}</Alert>}
-          {saved && <Alert tone="success">Saved.</Alert>}
+          {saved && (
+            <Alert tone="success">{savedTimezone ? `Saved. Server timezone set to ${savedTimezone}.` : 'Saved.'}</Alert>
+          )}
 
           <Button onClick={handleSave} disabled={saving || !canSave} variant="primary" className="w-full">
             {saving ? 'Saving...' : 'Save'}

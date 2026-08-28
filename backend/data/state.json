@@ -4,7 +4,8 @@
     "propresenter_host": "192.168.2.37",
     "propresenter_port": 61767,
     "propresenter_timer_name": "Segment Countdown",
-    "server_address": "192.168.2.37"
+    "server_address": "192.168.2.37",
+    "timezone": "America/Moncton"
   },
   "segments": {
     "Praise and Worship": 900,
@@ -26,7 +27,7 @@
       "Sermon",
       "Dedication"
     ],
-    "current_index": 0
+    "current_index": -1
   },
   "templates": {
     "Thanksgiving Sunday": {
@@ -43,21 +44,21 @@
     }
   },
   "stage_message": {
-    "text": "Coming Next: Tithe and Offering",
+    "text": "Coming Next: Praise and Worship",
     "expires_at": null,
     "auto": true
   },
   "timer": {
-    "name": "Praise and Worship",
-    "duration": 900,
-    "remaining": 899,
-    "status": "running",
-    "propresenter_connected": true
+    "name": "",
+    "duration": 0,
+    "status": "idle",
+    "frozen_remaining": 0,
+    "target_timestamp": null
   },
   "service_countdown": {
     "enabled": true,
     "recurrence": "weekly",
-    "target_time": "08:00",
+    "target_time": "10:30",
     "target_timestamp": null,
     "weekday": "sunday"
   }
