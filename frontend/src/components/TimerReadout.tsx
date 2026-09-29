@@ -45,10 +45,10 @@ export function TimerReadout({ state, large = false }: TimerReadoutProps) {
   // The engine flips status to "completed" the instant remaining hits 0 (and keeps counting
   // into overtime), so this is the exact "segment has elapsed" signal.
   const isTimeUp = state.status === 'completed';
-  const timeUpSize = large ? '' : 'text-xl sm:text-3xl';
+  const timeUpSize = large ? '' : 'text-3xl sm:text-5xl';
   const timeUpStyle = large
     ? {
-        fontSize: 'clamp(2.75rem, min(9vw, 10vh), 9rem)',
+        fontSize: 'clamp(5rem, min(16vw, 22vh), 20rem)',
         textShadow: '0 0 0.3em rgb(var(--c-danger) / 0.6)',
         animationDuration: '3.5s',
         animationDelay: '0.6s',
