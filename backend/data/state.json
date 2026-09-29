@@ -27,7 +27,7 @@
       "Sermon",
       "Dedication"
     ],
-    "current_index": -1
+    "current_index": 0
   },
   "templates": {
     "Thanksgiving Sunday": {
@@ -44,15 +44,15 @@
     }
   },
   "stage_message": {
-    "text": "Coming Next: Praise and Worship",
+    "text": "Coming Next: Tithe and Offering",
     "expires_at": null,
     "auto": true
   },
   "timer": {
-    "name": "",
-    "duration": 0,
+    "name": "Praise and Worship",
+    "duration": 900,
     "status": "idle",
-    "frozen_remaining": 0,
+    "frozen_remaining": 900,
     "target_timestamp": null
   },
   "service_countdown": {
